@@ -6,9 +6,11 @@ ARG TARGETPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 
-ARG NODE_VERSION=22.17.0
-ARG PNPM_VERSION=10.8.1
-ARG GO_VERSION=1.23.6
+ARG NODE_VERSION=24.16.0
+ARG PNPM_VERSION=11.5.0
+ARG GO_VERSION=1.26.3
+ARG MAVEN_VERSION=3.9.16
+ARG GRADLE_VERSION=9.5.1
 
 ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
 ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
@@ -22,7 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PNPM_HOME=/home/vscode/.local/share/pnpm \
     GOPATH=/home/vscode/go \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PATH=/home/vscode/.local/share/pnpm:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
+    PATH=/home/vscode/.local/share/pnpm:/opt/maven/bin:/opt/gradle/bin:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -64,10 +66,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python-is-python3 \
     openjdk-21-jdk \
-    maven \
-    gradle \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Maven and Gradle from official distributions
+RUN mkdir -p /opt \
+    && curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz \
+    && tar -xzf /tmp/maven.tgz -C /opt \
+    && ln -s "apache-maven-${MAVEN_VERSION}" /opt/maven \
+    && rm -f /tmp/maven.tgz \
+    && curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -s "gradle-${GRADLE_VERSION}" /opt/gradle \
+    && rm -f /tmp/gradle.zip \
+    && mvn --version \
+    && gradle --version
 
 # Install Node.js from official binaries for better multi-arch stability
 RUN case "${TARGETARCH}" in \
@@ -136,6 +149,8 @@ RUN corepack enable \
     && playwright --version \
     && python --version \
     && java -version \
+    && mvn --version \
+    && gradle --version \
     && go version \
     && uv --version
 

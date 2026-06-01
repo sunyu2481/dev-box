@@ -15,9 +15,11 @@ This repository defines `dev-box`, a multi-architecture development container im
 - Build with explicit toolchain versions:
   ```bash
   docker build \
-    --build-arg NODE_VERSION=22.17.0 \
-    --build-arg PNPM_VERSION=10.8.1 \
-    --build-arg GO_VERSION=1.23.6 \
+    --build-arg NODE_VERSION=24.16.0 \
+    --build-arg PNPM_VERSION=11.5.0 \
+    --build-arg GO_VERSION=1.26.3 \
+    --build-arg MAVEN_VERSION=3.9.16 \
+    --build-arg GRADLE_VERSION=9.5.1 \
     -t dev-box:local .
   ```
 - Run an interactive shell in the built image:
@@ -44,8 +46,9 @@ No language-specific test suite or linter is configured in this repository. Use 
 ## Architecture notes
 
 - `Dockerfile` starts from `mcr.microsoft.com/devcontainers/base:ubuntu-24.04` and uses `TARGETPLATFORM`, `TARGETOS`, and `TARGETARCH` for multi-architecture builds.
-- Tool versions are controlled by Docker build args: `NODE_VERSION`, `PNPM_VERSION`, and `GO_VERSION`. Prefer updating these defaults over hard-coding versions elsewhere.
-- System packages install common development tooling, Python, Java 21, Maven, Gradle, Git LFS, browser fonts, and network/debugging utilities.
+- Tool versions are controlled by Docker build args: `NODE_VERSION`, `PNPM_VERSION`, `GO_VERSION`, `MAVEN_VERSION`, and `GRADLE_VERSION`. Prefer updating these defaults over hard-coding versions elsewhere.
+- System packages install common development tooling, Python, Java 21, Git LFS, browser fonts, and network/debugging utilities.
+- Maven and Gradle are installed from official binary distributions under `/opt/maven` and `/opt/gradle`.
 - Node.js and Go are installed from upstream release archives with `TARGETARCH`-based architecture mapping. Keep those `case` mappings in sync if adding architecture support.
 - `uv` is installed from Astral's installer and copied to `/usr/local/bin` with `uvx`.
 - Global AI CLIs are installed through npm package args: Claude Code, OpenAI Codex CLI, and Gemini CLI.
