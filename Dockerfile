@@ -13,6 +13,7 @@ ARG GO_VERSION=1.23.6
 ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
 ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
 ARG GEMINI_CLI_NPM_PACKAGE="@google/gemini-cli"
+ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
@@ -20,6 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     PNPM_HOME=/home/vscode/.local/share/pnpm \
     GOPATH=/home/vscode/go \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/home/vscode/.local/share/pnpm:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -31,6 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     dnsutils \
+    fonts-liberation \
+    fonts-noto-cjk \
+    fonts-noto-color-emoji \
     git \
     git-lfs \
     gnupg \
@@ -98,12 +103,15 @@ RUN case "${TARGETARCH}" in \
     && rm -f /tmp/go.tgz \
     && go version
 
-# Install global AI CLIs
-RUN npm install -g \
+# Install global CLIs and browser automation runtime
+RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
     "${CODEX_CLI_NPM_PACKAGE}" \
     "${GEMINI_CLI_NPM_PACKAGE}" \
-    && npm cache clean --force
+    "${PLAYWRIGHT_NPM_PACKAGE}" \
+    && playwright install --with-deps chromium \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/*
 
 # Prepare vscode user environment
 RUN mkdir -p \
@@ -115,7 +123,8 @@ RUN mkdir -p \
     /home/vscode/go/pkg \
     /home/vscode/go/bin \
     /workspace \
-    && chown -R vscode:vscode /home/vscode /workspace
+    /ms-playwright \
+    && chown -R vscode:vscode /home/vscode /workspace /ms-playwright
 
 USER vscode
 WORKDIR /workspace
@@ -124,6 +133,7 @@ WORKDIR /workspace
 RUN corepack enable \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
     && pnpm --version \
+    && playwright --version \
     && python --version \
     && java -version \
     && go version \

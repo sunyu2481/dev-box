@@ -14,6 +14,8 @@ A multi-architecture development container image built with GitHub Actions and p
 - Maven
 - Gradle
 - Git / Git LFS
+- Chromium for browser automation via Playwright
+- Browser fonts for CJK, emoji, and common web rendering
 - Common development tools
 - AI CLI tools:
   - Claude Code
