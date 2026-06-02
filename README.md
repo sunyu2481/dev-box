@@ -22,7 +22,7 @@
   - Claude Code
   - OpenAI Codex CLI
   - Gemini CLI
-  - Hermes agent
+  - Hermes agent（随 gateway 预装 Telegram adapter 依赖）
 
 ## 镜像
 
@@ -48,7 +48,7 @@ DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker compose up -d
 
 `DOCKER_GID` 必须设置为宿主机 `/var/run/docker.sock` 的 group id。否则容器内的非 root 用户无法访问 Docker socket。
 
-容器启动时会在后台尝试启动 Hermes gateway；如果启动失败，会最多尝试 3 次，之后容器仍保持运行。
+容器启动时会在后台尝试启动 Hermes gateway；如果启动失败，会最多尝试 3 次，之后容器仍保持运行。Hermes gateway 已预装 `python-telegram-bot`，可加载 Telegram adapter。
 
 进入容器：
 

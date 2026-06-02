@@ -136,6 +136,8 @@ RUN case "${TARGETARCH}" in \
 # Install Hermes agent
 RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh" -o /tmp/hermes-install.sh \
     && bash /tmp/hermes-install.sh --skip-setup --skip-browser --non-interactive \
+    && /usr/local/lib/hermes-agent/venv/bin/python -m pip install --no-cache-dir python-telegram-bot \
+    && /usr/local/lib/hermes-agent/venv/bin/python -c "import telegram" \
     && hermes --help >/dev/null \
     && rm -f /tmp/hermes-install.sh \
     && apt-get clean \
