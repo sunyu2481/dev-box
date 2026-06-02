@@ -1,18 +1,18 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code（claude.ai/code）在本仓库中处理代码时提供项目指引。
 
-## Project overview
+## 项目概览
 
-This repository defines `dev-box`, a multi-architecture development container image published to GitHub Container Registry. The repository is intentionally small: `Dockerfile` is the source of truth for the image contents, and `.github/workflows/docker.yml` builds and publishes it.
+本仓库定义了 `dev-box`，这是一个发布到 GitHub Container Registry 的多架构开发容器镜像。仓库刻意保持精简：`Dockerfile` 是镜像内容的事实来源，`.github/workflows/docker.yml` 负责构建和发布镜像。
 
-## Common commands
+## 常用命令
 
-- Build the image locally for the current platform:
+- 为当前平台在本地构建镜像：
   ```bash
   docker build -t dev-box:local .
   ```
-- Build with explicit toolchain versions:
+- 使用显式工具链版本构建镜像：
   ```bash
   docker build \
     --build-arg NODE_VERSION=24.16.0 \
@@ -22,43 +22,51 @@ This repository defines `dev-box`, a multi-architecture development container im
     --build-arg GRADLE_VERSION=9.5.1 \
     -t dev-box:local .
   ```
-- Run an interactive shell in the built image:
+- 在已构建镜像中启动交互式 shell：
   ```bash
   docker run --rm -it dev-box:local bash
   ```
-- Verify the main installed toolchains inside the image:
+- 使用默认 Docker Compose 文件启动已发布镜像：
   ```bash
-  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && playwright --version && python --version && uv --version && go version && java -version && mvn --version && gradle --version'
+  DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker compose up -d
+  docker compose exec dev-box bash
+  docker compose down
   ```
-- Verify bundled Chromium can launch through Playwright:
+- 在镜像内验证主要工具链：
+  ```bash
+  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && playwright --version && python --version && uv --version && go version && java -version && mvn --version && gradle --version && docker --version && docker buildx version && docker compose version'
+  ```
+- 验证随镜像安装的 Chromium 可以通过 Playwright 启动：
   ```bash
   docker run --rm dev-box:local bash -lc 'playwright screenshot --browser=chromium about:blank /tmp/chromium.png'
   ```
-- Build the same platforms as CI without pushing:
+- 构建与 CI 相同的平台但不推送镜像：
   ```bash
   docker buildx build --platform linux/amd64,linux/arm64 -t dev-box:local .
   ```
 
-## Tests and linting
+## 测试和 lint
 
-No language-specific test suite or linter is configured in this repository. Use `docker build -t dev-box:local .` as the primary validation after Dockerfile changes, then run the Playwright Chromium launch check when browser-related layers change. There is no single-test command.
+本仓库没有配置语言特定的测试套件或 linter。修改 `Dockerfile` 后，优先使用 `docker build -t dev-box:local .` 作为主要验证方式；如果修改了浏览器相关层，再运行 Playwright Chromium 启动检查。本仓库没有单测试命令。
 
-## Architecture notes
+## 架构说明
 
-- `Dockerfile` starts from `mcr.microsoft.com/devcontainers/base:ubuntu-24.04` and uses `TARGETPLATFORM`, `TARGETOS`, and `TARGETARCH` for multi-architecture builds.
-- Tool versions are controlled by Docker build args: `NODE_VERSION`, `PNPM_VERSION`, `GO_VERSION`, `MAVEN_VERSION`, and `GRADLE_VERSION`. Prefer updating these defaults over hard-coding versions elsewhere.
-- System packages install common development tooling, Python, Java 21, Git LFS, browser fonts, and network/debugging utilities.
-- Maven and Gradle are installed from official binary distributions under `/opt/maven` and `/opt/gradle`.
-- Node.js and Go are installed from upstream release archives with `TARGETARCH`-based architecture mapping. Keep those `case` mappings in sync if adding architecture support.
-- `uv` is installed from Astral's installer and copied to `/usr/local/bin` with `uvx`.
-- Global AI CLIs are installed through npm package args: Claude Code, OpenAI Codex CLI, and Gemini CLI.
-- Chromium is installed through Playwright into `/ms-playwright` to keep browser automation compatible with both `linux/amd64` and `linux/arm64` builds.
-- The final image runs as the `vscode` user with `WORKDIR /workspace`; cache and tool directories under `/home/vscode` plus `/ms-playwright` are precreated and owned by `vscode`.
-- `.github/workflows/docker.yml` uses QEMU and Docker Buildx to publish `linux/amd64` and `linux/arm64` images to GHCR on pushes to `main`, `v*` tags, and manual `workflow_dispatch` runs.
-- Docker metadata tags include `latest` for the default branch, branch refs, tag refs, and `sha-*` tags.
+- `Dockerfile` 基于 `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`，并使用 `TARGETPLATFORM`、`TARGETOS` 和 `TARGETARCH` 支持多架构构建。
+- 工具版本由 Docker build args 控制：`NODE_VERSION`、`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION` 和 `GRADLE_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。
+- 系统包会安装常用开发工具、Python、Java 21、Git LFS、浏览器字体以及网络/调试工具。
+- Docker 客户端工具通过 Docker 官方 apt 源安装，包括 Docker CLI、Buildx plugin 和 Compose plugin；镜像内不启动 Docker daemon。
+- 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，挂载当前目录到 `/workspace`，用命名卷持久化 `/home/vscode`，并挂载宿主机 `/var/run/docker.sock` 供容器内 Docker CLI 使用；不要在 Compose 中重复覆盖镜像已有的 `CMD ["sleep", "infinity"]`。
+- Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
+- Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。
+- `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
+- 全局 AI CLI 通过 npm 包参数安装，包括 Claude Code、OpenAI Codex CLI 和 Gemini CLI。
+- Chromium 通过 Playwright 安装到 `/ms-playwright`，以保持浏览器自动化在 `linux/amd64` 和 `linux/arm64` 构建中的兼容性。
+- 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录以及 `/ms-playwright` 会预先创建并归属给 `vscode`。
+- `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` tag 以及手动触发 `workflow_dispatch` 时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。
+- Docker metadata tag 包括默认分支的 `latest`、分支引用、tag 引用和 `sha-*` tag。
 
-## Change guidance
+## 变更指引
 
-- When changing installed tooling, update `README.md` if the user-facing image contents change.
-- For version bumps, update the corresponding Dockerfile `ARG` default and validate with a rebuild.
-- Before modifying the publish workflow, check how `docker/metadata-action` tags and labels will change for branch, tag, and SHA builds.
+- 修改已安装工具时，如果影响用户可见的镜像内容，需要同步更新 `README.md`。
+- 进行版本升级时，更新对应的 Dockerfile `ARG` 默认值，并通过重新构建验证。
+- 修改发布 workflow 前，先检查 `docker/metadata-action` 对分支、tag 和 SHA 构建的 tag 与 label 影响。

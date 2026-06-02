@@ -1,0 +1,14 @@
+services:
+  dev-box:
+    image: ghcr.io/sunyu2481/dev-box:latest
+    container_name: dev-box
+    init: true
+    tty: true
+    stdin_open: true
+    working_dir: /workspace
+    volumes:
+      - ./workspace:/workspace
+      - ./.vscode:/home/vscode
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-0}"
