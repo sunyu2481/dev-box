@@ -36,8 +36,8 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 仓库提供了默认的 `docker-compose.yml`，会直接使用 `ghcr.io/sunyu2481/dev-box:latest`，并做以下挂载：
 
-- 当前目录挂载到容器内的 `/workspace`
-- 命名卷 `vscode-home` 挂载到 `/home/vscode`，用于保留 shell 配置、工具缓存、Maven/Gradle/Go 缓存等用户数据
+- `./workspace` 挂载到容器内的 `/workspace`
+- `./.vscode` 挂载到容器内的 `/home/vscode`，用于保留 shell 配置、工具缓存、Maven/Gradle/Go 缓存等用户数据
 - 宿主机 `/var/run/docker.sock` 挂载到容器内，供 Docker 客户端工具使用
 
 启动容器：
@@ -45,6 +45,10 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 ```bash
 DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker compose up -d
 ```
+
+`DOCKER_GID` 必须设置为宿主机 `/var/run/docker.sock` 的 group id。否则容器内的非 root 用户无法访问 Docker socket。
+
+容器启动时会在后台尝试启动 Hermes gateway；如果启动失败，会最多尝试 3 次，之后容器仍保持运行。
 
 进入容器：
 
@@ -58,11 +62,7 @@ docker compose exec dev-box bash
 docker compose down
 ```
 
-`docker compose down` 默认会保留 `vscode-home` 命名卷，因此 `/home/vscode` 下的配置和缓存会保留下来。如果需要连同该命名卷一起删除，可以执行：
-
-```bash
-docker compose down -v
-```
+`docker compose down` 不会删除绑定挂载目录，因此 `./workspace` 和 `./.vscode` 下的数据会保留下来。
 
 ### 使用 docker run 启动
 
@@ -93,7 +93,13 @@ docker build .
 docker compose up
 ```
 
-如果访问 `/var/run/docker.sock` 时看到 `permission denied`，请先确认宿主机 Docker daemon 正在运行，并保留 `docker run` 命令里的 `--group-add "$(stat -c '%g' /var/run/docker.sock)"` 参数。
+如果访问 `/var/run/docker.sock` 时看到 `permission denied`，请先确认宿主机 Docker daemon 正在运行。使用 Docker Compose 时，请带上 `DOCKER_GID` 并重新创建容器：
+
+```bash
+DOCKER_GID=$(stat -c '%g' /var/run/docker.sock) docker compose up -d --force-recreate
+```
+
+使用 `docker run` 时，请保留命令里的 `--group-add "$(stat -c '%g' /var/run/docker.sock)"` 参数。
 
 如果需要构建本地项目源码，可以同时挂载项目目录：
 

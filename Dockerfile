@@ -165,6 +165,8 @@ RUN mkdir -p \
     /ms-playwright \
     && chown -R vscode:vscode /home/vscode /workspace /ms-playwright
 
+COPY --chmod=0755 start-with-gateway.sh /usr/local/bin/start-with-gateway
+
 USER vscode
 WORKDIR /workspace
 
@@ -180,4 +182,4 @@ RUN corepack enable \
     && go version \
     && uv --version
 
-CMD ["sleep", "infinity"]
+CMD ["/usr/local/bin/start-with-gateway"]
