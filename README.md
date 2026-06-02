@@ -21,6 +21,7 @@ A multi-architecture development container image built with GitHub Actions and p
   - Claude Code
   - OpenAI Codex CLI
   - Gemini CLI
+  - Hermes agent
 
 ## Image
 

@@ -23,6 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     PNPM_HOME=/home/vscode/.local/share/pnpm \
     GOPATH=/home/vscode/go \
+    HERMES_HOME=/home/vscode/.hermes \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/home/vscode/.local/share/pnpm:/opt/maven/bin:/opt/gradle/bin:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
 
@@ -116,6 +117,14 @@ RUN case "${TARGETARCH}" in \
     && rm -f /tmp/go.tgz \
     && go version
 
+# Install Hermes agent
+RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh" -o /tmp/hermes-install.sh \
+    && bash /tmp/hermes-install.sh --skip-setup --skip-browser --non-interactive \
+    && hermes --help >/dev/null \
+    && rm -f /tmp/hermes-install.sh \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /root/.cache/uv /root/.cache/pip /root/.npm
+
 # Install global CLIs and browser automation runtime
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
@@ -131,6 +140,7 @@ RUN mkdir -p \
     /home/vscode/.local/share/pnpm \
     /home/vscode/.cache/pip \
     /home/vscode/.cache/uv \
+    /home/vscode/.hermes \
     /home/vscode/.m2 \
     /home/vscode/.gradle \
     /home/vscode/go/pkg \
