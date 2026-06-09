@@ -14,7 +14,6 @@ ARG GRADLE_VERSION=9.5.1
 
 ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
 ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
-ARG GEMINI_CLI_NPM_PACKAGE="@google/gemini-cli"
 ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -147,11 +146,14 @@ RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main
 RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
     "${CODEX_CLI_NPM_PACKAGE}" \
-    "${GEMINI_CLI_NPM_PACKAGE}" \
     "${PLAYWRIGHT_NPM_PACKAGE}" \
     && playwright install --with-deps chromium \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Antigravity CLI（官方安装脚本，自带 SHA512 校验，二进制名 agy）
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+    && command -v agy
 
 # Prepare vscode user environment
 RUN mkdir -p \

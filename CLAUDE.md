@@ -59,7 +59,7 @@
 - Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
 - Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。
 - `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
-- 全局 AI CLI 通过 npm 包参数安装，包括 Claude Code、OpenAI Codex CLI 和 Gemini CLI。
+- 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装；Antigravity CLI（二进制 `agy`）通过官方安装脚本 `https://antigravity.google/cli/install.sh` 安装到 `/usr/local/bin`，脚本自带 SHA512 校验，但只能安装 latest，无法 pin 版本。
 - Chromium 通过 Playwright 安装到 `/ms-playwright`，以保持浏览器自动化在 `linux/amd64` 和 `linux/arm64` 构建中的兼容性。
 - 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录以及 `/ms-playwright` 会预先创建并归属给 `vscode`。
 - `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` tag 以及手动触发 `workflow_dispatch` 时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。

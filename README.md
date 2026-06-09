@@ -21,7 +21,7 @@
 - AI CLI 工具：
   - Claude Code
   - OpenAI Codex CLI
-  - Gemini CLI
+  - Antigravity CLI
   - Hermes agent（随 gateway 预装 Telegram adapter 依赖）
 
 ## 镜像
