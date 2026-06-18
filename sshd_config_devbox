@@ -7,6 +7,7 @@ AddressFamily any
 # 认证策略：仅公钥
 PubkeyAuthentication yes
 PasswordAuthentication no
+KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 PermitRootLogin no
 
@@ -15,8 +16,9 @@ AuthorizedKeysFile /home/vscode/.ssh/authorized_keys
 HostKey /home/vscode/.ssh/host_keys/ssh_host_ed25519_key
 HostKey /home/vscode/.ssh/host_keys/ssh_host_rsa_key
 
-# vscode 账户密码字段被锁定，使用 PAM 账户管理会拒绝登录，公钥场景下关闭即可
-UsePAM no
+# vscode 账户密码字段被锁定（!）。UsePAM no 时 sshd 会因"账户锁定"拒绝包括公钥
+# 在内的所有认证；交给 PAM 处理则认为无密码账户的公钥登录合法。故必须开启。
+UsePAM yes
 
 PidFile /run/sshd/sshd.pid
 

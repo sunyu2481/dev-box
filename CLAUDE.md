@@ -54,7 +54,7 @@
 - `Dockerfile` 基于 `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`，并使用 `TARGETPLATFORM`、`TARGETOS` 和 `TARGETARCH` 支持多架构构建。
 - 工具版本由 Docker build args 控制：`NODE_VERSION`、`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION` 和 `GRADLE_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。
 - 系统包会安装常用开发工具、Python、Java 21、Git LFS、浏览器字体以及网络/调试工具。
-- OpenSSH 服务（`openssh-server`）随镜像安装，配置文件为 `/etc/ssh/sshd_config_devbox`（独立配置，仅公钥认证、禁用密码与 root 登录、`UsePAM no`）。镜像构建时删除 apt 固化生成的 `/etc/ssh/ssh_host_*`；host key 在容器首次启动时由 `start-with-gateway` 生成并持久化到 `/home/vscode/.ssh/host_keys`。公钥可通过环境变量 `SSH_PUBLIC_KEY`、挂载到 `~/.ssh` 下的任意 `*.pub` 文件、或直接放置 `~/.ssh/authorized_keys` 三种方式提供，启动脚本会去重合并到 vscode 用户的 `authorized_keys`；无授权公钥时不启动 sshd。sshd 由 vscode 用户经 `sudo` 以 root 启动。
+- OpenSSH 服务（`openssh-server`）随镜像安装，配置文件为 `/etc/ssh/sshd_config_devbox`（独立配置，仅公钥认证、禁用密码与 root 登录、`UsePAM yes`）。`UsePAM yes` 是必需的：vscode 账户密码字段被锁定（`!`），若 `UsePAM no` 则 sshd 会因"账户锁定"拒绝包括公钥在内的所有认证。镜像构建时删除 apt 固化生成的 `/etc/ssh/ssh_host_*`；host key 在容器首次启动时由 `start-with-gateway` 生成并持久化到 `/home/vscode/.ssh/host_keys`。公钥可通过环境变量 `SSH_PUBLIC_KEY`、挂载到 `~/.ssh` 下的任意 `*.pub` 文件、或直接放置 `~/.ssh/authorized_keys` 三种方式提供，启动脚本会去重合并到 vscode 用户的 `authorized_keys`；无授权公钥时不启动 sshd。sshd 由 vscode 用户经 `sudo` 以 root 启动。
 - Docker 客户端工具通过 Docker 官方 apt 源安装，包括 Docker CLI、Buildx plugin 和 Compose plugin；镜像内不启动 Docker daemon。
 - 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，挂载当前目录到 `/workspace`，用命名卷持久化 `/home/vscode`，并挂载宿主机 `/var/run/docker.sock` 供容器内 Docker CLI 使用。默认 `CMD` 为 `/usr/local/bin/start-with-gateway`（依次启动 sshd 与 Hermes gateway，最后 `exec sleep infinity`），不要在 Compose 中覆盖。Compose 默认把容器内 22 端口映射到宿主 `2222`，并透传 `SSH_PUBLIC_KEY` 环境变量。
 - Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
