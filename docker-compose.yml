@@ -6,6 +6,13 @@ services:
     tty: true
     stdin_open: true
     working_dir: /workspace
+    # 将外部 2222 端口映射到容器内 sshd 的 22 端口，外部可直接 SSH 连入
+    ports:
+      - "2222:22"
+    environment:
+      # 注入用于 SSH 公钥认证的公钥；留空则不启动 sshd。
+      # 例：SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
+      - SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-}
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode

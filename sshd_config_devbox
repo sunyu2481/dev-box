@@ -1,0 +1,31 @@
+# dev-box 专用 sshd 配置（通过 `sshd -f` 加载，不依赖默认 /etc/ssh/sshd_config）
+# 仅启用公钥认证，禁用密码与 root 登录，host key 持久化在 vscode 用户目录下。
+
+Port 22
+AddressFamily any
+
+# 认证策略：仅公钥
+PubkeyAuthentication yes
+PasswordAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+
+# 登录用户为 vscode，凭据与 host key 均落在持久化的 /home/vscode 下
+AuthorizedKeysFile /home/vscode/.ssh/authorized_keys
+HostKey /home/vscode/.ssh/host_keys/ssh_host_ed25519_key
+HostKey /home/vscode/.ssh/host_keys/ssh_host_rsa_key
+
+# vscode 账户密码字段被锁定，使用 PAM 账户管理会拒绝登录，公钥场景下关闭即可
+UsePAM no
+
+PidFile /run/sshd/sshd.pid
+
+# 开发场景常用端口转发，关闭 X11
+AllowTcpForwarding yes
+X11Forwarding no
+ClientAliveInterval 60
+ClientAliveCountMax 3
+
+AcceptEnv LANG LC_*
+
+Subsystem sftp /usr/lib/openssh/sftp-server

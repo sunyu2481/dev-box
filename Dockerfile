@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     net-tools \
     openssh-client \
+    openssh-server \
     pkg-config \
     rsync \
     software-properties-common \
@@ -66,6 +67,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     python-is-python3 \
     openjdk-21-jdk \
+    && rm -f /etc/ssh/ssh_host_* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -169,6 +171,7 @@ RUN mkdir -p \
     /ms-playwright \
     && chown -R vscode:vscode /home/vscode /workspace /ms-playwright
 
+COPY sshd_config_devbox /etc/ssh/sshd_config_devbox
 COPY --chmod=0755 start-with-gateway.sh /usr/local/bin/start-with-gateway
 
 USER vscode
