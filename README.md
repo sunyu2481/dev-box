@@ -13,7 +13,7 @@
 - Java 21
 - Maven 3.9
 - Gradle 9
-- Git / Git LFS
+- Git / Git LFS / GitHub CLI (`gh`)
 - Docker CLI、Buildx 和 Compose plugin
 - 通过 Playwright 提供用于浏览器自动化的 Chromium
 - 支持 CJK、emoji 和常见网页渲染场景的浏览器字体

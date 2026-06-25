@@ -87,6 +87,17 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# 安装 GitHub CLI
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && gh --version \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Maven and Gradle from official distributions
 RUN mkdir -p /opt \
     && curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz \
@@ -187,6 +198,7 @@ RUN corepack enable \
     && mvn --version \
     && gradle --version \
     && go version \
-    && uv --version
+    && uv --version \
+    && gh --version
 
 CMD ["/usr/local/bin/start-with-gateway"]
