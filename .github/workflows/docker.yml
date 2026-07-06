@@ -7,6 +7,17 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      refresh_volatile_tools:
+        description: 'Reinstall latest global CLIs such as Codex, Claude Code, Playwright, and Antigravity'
+        required: false
+        default: false
+        type: boolean
+      no_cache:
+        description: 'Build the whole image without using Docker layer cache'
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -67,5 +78,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
+          no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
+          build-args: |
+            VOLATILE_TOOLS_CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && inputs.refresh_volatile_tools && github.run_id || '0' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

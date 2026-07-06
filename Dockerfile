@@ -15,6 +15,7 @@ ARG GRADLE_VERSION=9.5.1
 ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
 ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
 ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
+ARG VOLATILE_TOOLS_CACHE_BUST=0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
@@ -156,7 +157,8 @@ RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main
     && rm -rf /var/lib/apt/lists/* /root/.cache/uv /root/.cache/pip /root/.npm
 
 # Install global CLIs and browser automation runtime
-RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
+RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
+    && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
     "${CODEX_CLI_NPM_PACKAGE}" \
     "${PLAYWRIGHT_NPM_PACKAGE}" \
@@ -165,7 +167,8 @@ RUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Antigravity CLI（官方安装脚本，自带 SHA512 校验，二进制名 agy）
-RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
+RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
+    && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
     && command -v agy
 
 # Prepare vscode user environment

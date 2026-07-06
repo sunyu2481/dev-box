@@ -31,6 +31,15 @@
 docker pull ghcr.io/sunyu2481/dev-box:latest
 ```
 
+## 发布与刷新预装工具
+
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。workflow 默认使用 Docker layer cache，因此未修改 `Dockerfile` 时，手动触发可能会快速命中缓存，不会重新安装 Codex、Claude Code、Playwright、Antigravity 这类默认安装 latest 的工具。
+
+手动运行 workflow 时：
+
+- 只想刷新 Codex 等未固定版本的全局 CLI，勾选 `refresh_volatile_tools`。
+- 需要完整绕过所有 Docker 构建缓存，勾选 `no_cache`。
+
 ## 使用方式
 
 ### 使用 Docker Compose 启动
