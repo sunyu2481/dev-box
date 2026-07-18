@@ -72,22 +72,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Docker client tooling
-RUN install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"${VERSION_CODENAME}\") stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-        docker-ce-cli \
-        docker-buildx-plugin \
-        docker-compose-plugin \
-    && docker --version \
-    && docker buildx version \
-    && docker compose version \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
 # 安装 GitHub CLI
 RUN install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -146,13 +130,60 @@ RUN case "${TARGETARCH}" in \
     && rm -f /tmp/go.tgz \
     && go version
 
-# Install Hermes agent
+# Install Hermes agent（仅保留 gateway 运行时：Python venv + 源码；去掉桌面/TUI/Web/测试与 node 依赖）
 RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh" -o /tmp/hermes-install.sh \
     && bash /tmp/hermes-install.sh --skip-setup --skip-browser --non-interactive \
     && uv pip install --python /usr/local/lib/hermes-agent/venv/bin/python python-telegram-bot \
     && /usr/local/lib/hermes-agent/venv/bin/python -c "import telegram" \
     && hermes --help >/dev/null \
-    && rm -f /tmp/hermes-install.sh \
+    && hermes gateway --help >/dev/null \
+    && rm -rf \
+        /usr/local/lib/hermes-agent/node_modules \
+        /usr/local/lib/hermes-agent/apps \
+        /usr/local/lib/hermes-agent/website \
+        /usr/local/lib/hermes-agent/tests \
+        /usr/local/lib/hermes-agent/web \
+        /usr/local/lib/hermes-agent/ui-tui \
+        /usr/local/lib/hermes-agent/tui_gateway \
+        /usr/local/lib/hermes-agent/docs \
+        /usr/local/lib/hermes-agent/.github \
+        /usr/local/lib/hermes-agent/.git \
+        /usr/local/lib/hermes-agent/.plans \
+        /usr/local/lib/hermes-agent/nix \
+        /usr/local/lib/hermes-agent/docker \
+        /usr/local/lib/hermes-agent/assets \
+        /usr/local/lib/hermes-agent/datagen-config-examples \
+        /usr/local/lib/hermes-agent/package.json \
+        /usr/local/lib/hermes-agent/package-lock.json \
+        /usr/local/lib/hermes-agent/Dockerfile \
+        /usr/local/lib/hermes-agent/docker-compose.yml \
+        /usr/local/lib/hermes-agent/docker-compose.windows.yml \
+        /usr/local/lib/hermes-agent/flake.nix \
+        /usr/local/lib/hermes-agent/flake.lock \
+        /usr/local/lib/hermes-agent/.hadolint.yaml \
+        /usr/local/lib/hermes-agent/.dockerignore \
+        /usr/local/lib/hermes-agent/.gitattributes \
+        /usr/local/lib/hermes-agent/.gitignore \
+        /usr/local/lib/hermes-agent/.mailmap \
+        /usr/local/lib/hermes-agent/.envrc \
+        /usr/local/lib/hermes-agent/README.md \
+        /usr/local/lib/hermes-agent/README.es.md \
+        /usr/local/lib/hermes-agent/README.ur-pk.md \
+        /usr/local/lib/hermes-agent/README.zh-CN.md \
+        /usr/local/lib/hermes-agent/CONTRIBUTING.md \
+        /usr/local/lib/hermes-agent/CONTRIBUTING.es.md \
+        /usr/local/lib/hermes-agent/SECURITY.md \
+        /usr/local/lib/hermes-agent/SECURITY.es.md \
+        /usr/local/lib/hermes-agent/AGENTS.md \
+        /usr/local/lib/hermes-agent/hermes-already-has-routines.md \
+    && rm -rf \
+        "${HERMES_HOME}/node" \
+        /root/.hermes/node \
+        /root/.npm \
+        /tmp/npm-* \
+        /tmp/hermes-install.sh \
+    && hermes --help >/dev/null \
+    && hermes gateway --help >/dev/null \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /root/.cache/uv /root/.cache/pip /root/.npm
 
@@ -165,11 +196,6 @@ RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
     && playwright install --with-deps chromium \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Antigravity CLI（官方安装脚本，自带 SHA512 校验，二进制名 agy）
-RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
-    && curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /usr/local/bin \
-    && command -v agy
 
 # Prepare vscode user environment
 RUN mkdir -p \

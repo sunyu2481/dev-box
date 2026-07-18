@@ -16,6 +16,3 @@ services:
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
-      - /var/run/docker.sock:/var/run/docker.sock
-    group_add:
-      - "${DOCKER_GID:?DOCKER_GID is required. Run with: DOCKER_GID=<docker-socket-gid> docker compose up -d}"
