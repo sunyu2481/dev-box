@@ -11,6 +11,35 @@ KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 PermitRootLogin no
 
+# 只允许 vscode 登录，其他用户名在认证前即被拒绝，不再进入 PAM 流程
+AllowUsers vscode
+
+# 抗爆破限流：每条未认证（pre-auth）连接对应一个 sshd 子进程，扫描器持续建连时
+# 这些进程会堆积。以下按「单人使用」收紧——如需多人共享出口 IP 请放宽并发项。
+#   LoginGraceTime      认证宽限期，默认 120s；15s 足够正常握手，挂起连接快速回收
+#   MaxAuthTries        单连接认证失败次数上限。不建议降到 2：ssh-agent 会逐个
+#                       尝试本地私钥，密钥较多时正确的那把可能排在第 3 位之后
+#   MaxStartups         start:rate:full — 超过 4 条未认证连接后按 100% 概率丢弃，
+#                       达到 10 条全部拒绝（默认 10:30:100 上限过高）
+#   PerSourceMaxStartups 单来源未认证连接上限。VS Code Remote-SSH 等工具会并发
+#                       建多条连接，低于 4 容易误伤自己
+LoginGraceTime 15
+MaxAuthTries 3
+MaxStartups 4:100:10
+PerSourceMaxStartups 4
+PerSourceNetBlockSize 32:128
+
+# 单人使用：无需保留交互式 shell 之外的多路会话余量（默认 10）
+MaxSessions 4
+
+# 日志：启动脚本以 `sshd -D -e` 运行，日志改走 stderr 并汇入 docker logs。
+# 容器内没有 rsyslog/journald，若沿用默认的 syslog 输出则日志被直接丢弃。
+# LogLevel VERBOSE 是审计爆破的最低可用级别：INFO 不记录公钥指纹，
+# VERBOSE 才会输出 "Failed publickey for ... SHA256:xxx" 与断连来源，
+# 足以识别攻击源；DEBUG 过于嘈杂且会泄露协议细节，不要在此使用。
+SyslogFacility AUTH
+LogLevel VERBOSE
+
 # 登录用户为 vscode，凭据与 host key 均落在持久化的 /home/vscode 下
 AuthorizedKeysFile /home/vscode/.ssh/authorized_keys
 HostKey /home/vscode/.ssh/host_keys/ssh_host_ed25519_key

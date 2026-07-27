@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sudo \
     telnet \
     time \
+    tini \
     tree \
     unzip \
     vim \
@@ -230,4 +231,11 @@ RUN corepack enable \
     && uv --version \
     && gh --version
 
+# tini 作为 PID 1：容器主进程必须负责回收孤儿进程。sshd 的 pre-auth 子进程在
+# 遭遇扫描/爆破时会被 reparent 到 PID 1，若 PID 1 不调用 wait()（如 sleep），
+# 这些进程退出后会永久停留在 Z 状态并耗尽 PID。tini 内置于镜像，因此无论调用方
+# 是否传 `docker run --init` / compose `init: true`，回收行为都成立。
+# -s：即使 tini 不是 PID 1（例如调用方又叠了 docker-init）也注册为 child subreaper，
+# 保证孤儿仍被收养回收；-g：信号转发给整个进程组，便于 docker stop 干净退出。
+ENTRYPOINT ["/usr/bin/tini", "-s", "-g", "--"]
 CMD ["/usr/local/bin/start-with-gateway"]
