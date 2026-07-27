@@ -77,9 +77,11 @@ docker compose down
 docker run --rm -it ghcr.io/sunyu2481/dev-box:latest bash
 ```
 
-### 通过 SSH 直连容器
+### 通过 SSH 连入容器
 
-镜像内置 OpenSSH 服务，外部可以不经宿主机跳转、直接 SSH 连入容器。出于安全考虑**只启用公钥认证**，密码与 root 登录均已禁用。
+镜像内置 OpenSSH 服务，出于安全考虑**只启用公钥认证**，密码与 root 登录均已禁用。
+
+容器 sshd 默认只绑定到宿主机 `127.0.0.1:2222`，**不暴露公网**。推荐经宿主机 SSH 跳转连入：公网只需开放宿主机自身的 22 端口，一个端口同时满足连宿主机和连容器两种需求。
 
 sshd 仅在检测到已授权公钥时才启动。公钥可通过以下任一方式提供（任选其一）：
 
@@ -87,19 +89,10 @@ sshd 仅在检测到已授权公钥时才启动。公钥可通过以下任一方
 - **挂载公钥文件**：把 `id_ed25519.pub` 等公钥文件放到宿主机 `./.vscode/.ssh/`（对应容器内 `~/.ssh`），启动时会自动合并该目录下所有 `*.pub`；
 - **挂载 authorized_keys**：直接编辑/挂载 `./.vscode/.ssh/authorized_keys`。
 
-方式一，使用 Docker Compose 注入环境变量（默认把容器内 22 端口映射到宿主机 `2222`）：
+方式一，使用 Docker Compose 注入环境变量：
 
 ```bash
 SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
-```
-
-使用 `docker run`：
-
-```bash
-docker run -d \
-  -p 2222:22 \
-  -e SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" \
-  ghcr.io/sunyu2481/dev-box:latest
 ```
 
 方式二，把公钥文件丢进挂载目录（无需环境变量）：
@@ -110,12 +103,126 @@ cp ~/.ssh/id_ed25519.pub ./.vscode/.ssh/
 docker compose up -d
 ```
 
-随后从外部连接（登录用户为 `vscode`）：
+#### 经宿主机跳转连入（推荐，只需开放一个公网端口）
+
+在**客户端**（你的笔记本）执行，`-J` 让 SSH 先连宿主机、再从宿主机连容器：
 
 ```bash
-ssh -p 2222 vscode@<宿主机地址>
+ssh -J <宿主机用户>@<宿主机地址> -p 2222 vscode@127.0.0.1
+```
+
+`127.0.0.1` 是在宿主机视角解析的，即宿主机上映射到容器的 loopback 端口。
+
+写进客户端 `~/.ssh/config` 后可直接 `ssh dev-box`：
+
+```
+Host myhost
+    HostName <宿主机地址>
+    User <宿主机用户>
+
+Host dev-box
+    HostName 127.0.0.1
+    Port 2222
+    User vscode
+    ProxyJump myhost
+    # 127.0.0.1:2222 是个很容易撞车的 known_hosts 键（任何本地端口转发都可能占用）。
+    # HostKeyAlias 让该容器的 host key 单独记账，避免与其他主机相互报指纹变更。
+    HostKeyAlias dev-box-container
+```
+
+跳转要求宿主机 sshd 开启 `AllowTcpForwarding yes`（OpenSSH 默认已开启）。这样公网暴露面只有宿主机 22 端口一个，容器 sshd 完全不对外可见。
+
+> 网络较卡时，可在客户端 `~/.ssh/config` 中为上述 Host 加 `ControlMaster auto`、`ControlPersist 10m` 复用连接，省掉每次重连的握手开销。
+
+#### 直接暴露容器端口（可选，不推荐）
+
+确需绕过跳转时，显式覆盖绑定地址：
+
+```bash
+DEVBOX_SSH_BIND=0.0.0.0 SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
+```
+
+`docker run` 同理（注意 `-p` 左侧的绑定地址）：
+
+```bash
+docker run -d \
+  -p 127.0.0.1:2222:22 \
+  -e SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" \
+  ghcr.io/sunyu2481/dev-box:latest
 ```
 
 host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名卷/绑定挂载保留，重建容器后 SSH 指纹保持不变，不会触发客户端的 `REMOTE HOST IDENTIFICATION HAS CHANGED` 警告。
 
 > SSH 服务以 root 权限通过 `vscode` 用户的 `sudo` 启动；将端口暴露到公网前，请确认注入的是受信任的公钥。
+
+### 日志
+
+容器内所有子系统的日志统一汇聚到主进程 stdout，因此 `docker logs` 一处即可看全。每行带时间戳与来源标签：
+
+```
+2026-07-27T11:36:02+0800 [init]    初始化完成，容器进入常驻状态
+2026-07-27T11:36:02+0800 [sshd]    Invalid user baduser from 203.0.113.9 port 56542
+2026-07-27T11:36:05+0800 [gateway] ...
+```
+
+| 标签 | 来源 |
+| --- | --- |
+| `[init]` | 启动脚本自身：各服务启停、健康告警 |
+| `[sshd]` | OpenSSH 服务：连接、认证成功/失败、来源 IP 与公钥指纹 |
+| `[gateway]` | Hermes gateway |
+
+查看方式：
+
+```bash
+docker compose logs -f                       # 全部
+docker compose logs -f | grep '\[sshd\]'      # 只看 SSH
+docker compose logs | grep -E 'Invalid user|Failed publickey'   # 只看认证失败
+```
+
+实现上有两点是必需的，改动前请留意：
+
+- sshd 以 `-D -e` 启动。不带 `-D` 会自我 daemonize 并把 stdio 重定向到 `/dev/null`；不带 `-e` 则日志写向 syslog，而容器内没有 syslog 守护进程接收 —— 两者任缺其一，SSH 日志都会**完全消失**，这正是此前爆破无从发现的原因。
+- `LogLevel VERBOSE`（`sshd_config_devbox`）。`INFO` 不记录公钥指纹，`VERBOSE` 才会输出 `Failed publickey for ... SHA256:xxx`，足以识别攻击源。`DEBUG` 过于嘈杂，不建议。
+
+#### 健康汇报
+
+启动脚本常驻后每 5 分钟检查一次，仅在有异常时输出，正常情况下静默：
+
+```
+2026-07-27T11:45:42+0800 [init] SSH 认证失败 37 次（最近 300s，累计 37 次）；若非本人操作则为爆破尝试，详见 [sshd] 日志中的来源 IP
+2026-07-27T11:50:42+0800 [init] 警告：检测到 12 个僵尸进程（正常应为 0，说明 PID 1 未回收子进程）
+2026-07-27T11:55:42+0800 [init] 警告：sshd 进程已退出，SSH 将无法连入
+```
+
+汇报间隔由 `HEALTH_REPORT_INTERVAL` 控制（秒，设为 `0` 关闭）：
+
+```yaml
+environment:
+  - HEALTH_REPORT_INTERVAL=60
+```
+
+### 抗爆破与僵尸进程回收
+
+SSH 端口一旦对公网开放，就会被扫描器持续爆破。密码认证已禁用，攻击无法得手，但每条未认证连接都会派生一个 sshd 子进程，因此镜像做了两层处理：
+
+- **限流**（`sshd_config_devbox`，按单人使用调优）：`LoginGraceTime 15` 缩短挂起连接存活时间，`MaxAuthTries 3` 限制单连接认证次数，`MaxStartups 4:100:10` 未认证连接超过 4 条后即 100% 拒绝新连接、硬上限 10 条，`PerSourceMaxStartups 4` 限制单一来源 IP，`MaxSessions 4` 限制单连接内的复用会话数，`AllowUsers vscode` 让其他用户名在进入 PAM 前即被拒绝。
+- **进程回收**：镜像 `ENTRYPOINT` 为 `tini -s -g --`，作为 PID 1 回收孤儿进程。这是必需的 —— 启动脚本以 `sleep infinity` 常驻，而 `sleep` 不调用 `wait()`，若由它充当 PID 1，被收养的 sshd 子进程退出后会堆积成僵尸进程（`Z` 状态）直至耗尽 PID。
+
+> 上述限流值面向单人使用。若多人共享同一出口 IP（NAT），`PerSourceMaxStartups 4` 与 `MaxStartups` 可能误伤，需相应放宽。
+
+排查僵尸进程堆积：
+
+```bash
+# 查看 PID 1 是否为 tini（应输出 tini，而非 sleep）
+docker compose exec dev-box ps -o comm= -p 1
+# 统计僵尸进程
+docker compose exec dev-box bash -lc "ps -eo stat= | grep -c '^Z'"
+```
+
+僵尸进程无法单独 kill，只能由父进程回收。若在旧版镜像上已经堆积，重建容器即可清除：
+
+```bash
+docker compose up -d --force-recreate
+```
+
+当前基础镜像的 OpenSSH 为 9.6p1，尚不支持 9.8+ 的 `PerSourcePenalties`（自动封禁反复失败的来源）。限流只能减轻爆破影响、不能阻止爆破，因此优先使用上文的跳转方案，不要把容器端口直接开到公网。

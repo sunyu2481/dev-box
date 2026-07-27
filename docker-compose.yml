@@ -2,17 +2,32 @@ services:
   dev-box:
     image: ghcr.io/sunyu2481/dev-box:latest
     container_name: dev-box
+    # 镜像 ENTRYPOINT 已内置 tini（含 -s subreaper），此项冗余但无害：
+    # 保留作为兜底，防止运行时用 --entrypoint 覆盖掉 tini 后失去僵尸回收。
     init: true
     tty: true
     stdin_open: true
     working_dir: /workspace
-    # 将外部 2222 端口映射到容器内 sshd 的 22 端口，外部可直接 SSH 连入
+    # 容器 sshd 默认只绑宿主机 loopback，不暴露公网——公网被爆破时每条未认证
+    # 连接都会产生一个 pre-auth sshd 子进程。推荐从外部经宿主机 SSH 跳转连入
+    # （ssh -J），只需开放宿主机自身的 22 端口，详见 README「通过 SSH 直连容器」。
+    # 确需直接暴露时显式覆盖，例：DEVBOX_SSH_BIND=0.0.0.0 docker compose up -d
     ports:
-      - "2222:22"
+      - "${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22"
     environment:
       # 注入用于 SSH 公钥认证的公钥；留空则不启动 sshd。
       # 例：SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)" docker compose up -d
       - SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY:-}
+      # 健康汇报间隔（秒）：周期性把僵尸进程数与 SSH 认证失败增量打进 docker logs，
+      # 仅在有异常时输出。设为 0 关闭汇报。
+      - HEALTH_REPORT_INTERVAL=${HEALTH_REPORT_INTERVAL:-300}
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
+    # 所有子系统日志统一汇聚到容器 stdout（前缀 [init]/[sshd]/[gateway]），
+    # 被爆破时 [sshd] 行会快速增长，需限制日志占用磁盘的上限。
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
