@@ -106,11 +106,7 @@ RUN case "${TARGETARCH}" in \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
     esac \
     && curl -fsSL https://nodejs.org/dist/index.json -o /tmp/node-index.json 2>/dev/null || true \
-    && NODE_LATEST=$(jq -r '
-            [.[] | select(.lts != false) | .version[1:]]
-            | map(split(".") | map(tonumber))
-            | sort_by(.[0],.[1],.[2]) | last | "v"+(.[0]|tostring)+"."+(.[1]|tostring)+"."+(.[2]|tostring)
-          ' /tmp/node-index.json 2>/dev/null) || true \
+    && NODE_LATEST=$(jq -r '[.[]|select(.lts!=false)|.version[1:]]|map(split(".")|map(tonumber))|sort_by(.[0],.[1],.[2])|last|"v"+(.[0]|tostring)+"."+(.[1]|tostring)+"."+(.[2]|tostring)' /tmp/node-index.json 2>/dev/null) || true \
     && rm -f /tmp/node-index.json \
     && NODE_RESOLVED=${NODE_LATEST:-v${NODE_VERSION}} \
     && if [ -n "$NODE_LATEST" ]; then echo "Resolved Node: ${NODE_RESOLVED} (auto latest LTS)"; else echo "Resolved Node: ${NODE_RESOLVED} (fallback to built-in: v${NODE_VERSION})"; fi \
