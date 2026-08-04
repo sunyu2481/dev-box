@@ -6,8 +6,10 @@ ARG TARGETPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 
-ARG NODE_VERSION=24.16.0
-ARG PNPM_VERSION=11.5.0
+# NODE_VERSION: 自动安装最新 LTS 版本时的 fallback（仅当无法访问 nodejs.org/dist/index.json
+# 时回退到此版本）。设为当前已知最新的 LTS，避免回退命中历史坏区间版本导致构建失败。
+ARG NODE_VERSION=24.19.0
+ARG PNPM_VERSION=11.20.0
 ARG GO_VERSION=1.26.3
 ARG MAVEN_VERSION=3.9.16
 ARG GRADLE_VERSION=9.5.1
@@ -103,7 +105,16 @@ RUN case "${TARGETARCH}" in \
         arm64) NODE_ARCH='arm64' ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
     esac \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
+    && curl -fsSL https://nodejs.org/dist/index.json -o /tmp/node-index.json 2>/dev/null || true \
+    && NODE_LATEST=$(jq -r '
+            [.[] | select(.lts != false) | .version[1:]]
+            | map(split(".") | map(tonumber))
+            | sort_by(.[0],.[1],.[2]) | last | "v"+(.[0]|tostring)+"."+(.[1]|tostring)+"."+(.[2]|tostring)
+          ' /tmp/node-index.json 2>/dev/null) || true \
+    && rm -f /tmp/node-index.json \
+    && NODE_RESOLVED=${NODE_LATEST:-v${NODE_VERSION}} \
+    && if [ -n "$NODE_LATEST" ]; then echo "Resolved Node: ${NODE_RESOLVED} (auto latest LTS)"; else echo "Resolved Node: ${NODE_RESOLVED} (fallback to built-in: v${NODE_VERSION})"; fi \
+    && curl -fsSL "https://nodejs.org/dist/${NODE_RESOLVED}/node-${NODE_RESOLVED}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm -f /tmp/node.tar.xz \
     && node --version \

@@ -52,7 +52,7 @@
 ## 架构说明
 
 - `Dockerfile` 基于 `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`，并使用 `TARGETPLATFORM`、`TARGETOS` 和 `TARGETARCH` 支持多架构构建。
-- 工具版本由 Docker build args 控制：`NODE_VERSION`、`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION` 和 `GRADLE_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。
+- 工具版本由 Docker build args 控制：`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION` 和 `GRADLE_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。`NODE_VERSION` 语义特殊：Node.js 构建时**自动从 `nodejs.org/dist/index.json` 取最新 LTS 版本**安装，`NODE_VERSION` 仅作为无法访问该 index 时的 fallback，建议保持为当前已知最新 LTS（回退命中历史坏区间版本会导致构建失败，见下文）。
 - 系统包会安装常用开发工具、Python、Java 21、Git LFS、浏览器字体以及网络/调试工具。
 - GitHub CLI（`gh`）通过 GitHub CLI 官方 apt 源安装。
 - OpenSSH 服务（`openssh-server`）随镜像安装，配置文件为 `/etc/ssh/sshd_config_devbox`（独立配置，仅公钥认证、禁用密码与 root 登录、`UsePAM yes`）。`UsePAM yes` 是必需的：vscode 账户密码字段被锁定（`!`），若 `UsePAM no` 则 sshd 会因"账户锁定"拒绝包括公钥在内的所有认证。镜像构建时删除 apt 固化生成的 `/etc/ssh/ssh_host_*`；host key 在容器首次启动时由 `start-with-gateway` 生成并持久化到 `/home/vscode/.ssh/host_keys`。公钥可通过环境变量 `SSH_PUBLIC_KEY`、挂载到 `~/.ssh` 下的任意 `*.pub` 文件、或直接放置 `~/.ssh/authorized_keys` 三种方式提供，启动脚本会去重合并到 vscode 用户的 `authorized_keys`；无授权公钥时不启动 sshd。sshd 由 vscode 用户经 `sudo` 以 root 启动。
@@ -67,7 +67,7 @@
 - 镜像不预装 Docker CLI / Buildx / Compose；如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 socket。
 - 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，挂载当前目录到 `/workspace`，用绑定挂载持久化 `/home/vscode`。默认 `CMD` 为 `/usr/local/bin/start-with-gateway`（依次启动 sshd 与 Hermes gateway，最后进入健康汇报循环常驻），由上述 tini `ENTRYPOINT` 拉起，不要在 Compose 中覆盖二者。Compose 的 SSH 端口映射为 `${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22`——**默认只绑宿主机 loopback，不暴露公网**，推荐经宿主机 SSH 跳转（`ssh -J` / `ProxyJump`）连入容器，这样公网只需开放宿主机自身的 22 端口。要直接暴露需显式设 `DEVBOX_SSH_BIND=0.0.0.0`。改动此默认绑定地址等于扩大公网暴露面，需先确认。Compose 同时透传 `SSH_PUBLIC_KEY` 环境变量。
 - Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
-- Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。
+- Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。Node.js 安装层会先查 `nodejs.org/dist/index.json` 取最新 LTS 版本号，查不到则回退到 `NODE_VERSION` 构建参数（见架构说明第一条）。历史上 Hermes `install.sh` 会因 Node 自带 npm 落入 11.10–11.16 坏区间（无法 honor 某些 `.npmrc` 选项）而改自装 Node 并用 `ln -sf` 覆盖 `/usr/local/bin/{node,npm,npx}`，随后镜像清理删除 `${HERMES_HOME}/node` 导致这些符号链接变成死链、后续 `npm install -g` 报 `npm: command not found`。自动取最新 LTS 且 fallback 亦避开坏区间即可规避此问题。
 - `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
 - 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装。
 - Hermes 通过官方 `install.sh`（`--skip-setup --skip-browser --non-interactive`）安装到 `/usr/local/lib/hermes-agent`，并额外 `uv pip install python-telegram-bot`。安装后删除 gateway 非必需内容（`node_modules`、`apps`/`website`/`web`/`ui-tui`/`tests`/`.git` 等），仅保留 Python venv 与 editable 源码树供 `hermes gateway` 使用。
