@@ -14,7 +14,7 @@
 - Maven 3.9
 - Gradle 9
 - Git / Git LFS / GitHub CLI (`gh`)
-- 通过 Playwright 提供用于浏览器自动化的 Chromium
+- 浏览器自动化客户端：Playwright 库与 `chrome-devtools-mcp`（**不含浏览器二进制**，浏览器由 ChromiumManager 容器经 CDP 提供，见下文）
 - 支持 CJK、emoji 和常见网页渲染场景的浏览器字体
 - 常用开发工具
 - 内置 OpenSSH 服务，支持外部直接 SSH 连入容器（仅公钥认证）
@@ -154,6 +154,80 @@ docker run -d \
 host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名卷/绑定挂载保留，重建容器后 SSH 指纹保持不变，不会触发客户端的 `REMOTE HOST IDENTIFICATION HAS CHANGED` 警告。
 
 > SSH 服务以 root 权限通过 `vscode` 用户的 `sudo` 启动；将端口暴露到公网前，请确认注入的是受信任的公钥。
+
+### 浏览器：接入 ChromiumManager
+
+镜像**不预装浏览器二进制**。浏览器由独立的 [ChromiumManager](https://github.com/sunyu2481/chromium-manager) 容器提供，dev-box 里的 agent（Claude Code、Codex）与脚本经其 CDP 网关连接远程实例。这样做的收益：镜像少约 1 GB，且拿到的是带指纹伪装、代理与持久化 Cookie 的有头浏览器，比本地 headless Chromium 更接近真实环境。
+
+镜像内保留的是纯客户端：`playwright` npm 包（供 `connectOverCDP`）与 `chrome-devtools-mcp`（供 agent 用 MCP 操作浏览器）。
+
+#### 前置：两个容器同网
+
+ChromiumManager 的 agent 面默认监听 `10102`，**不要** publish 到宿主机（默认无鉴权），只需同网可达。组网步骤见 `docker-compose.yml` 末尾的 networks 注释。若 ChromiumManager 设了 `AGENT_TOKEN`，dev-box 侧同步设 `CHROMIUM_MANAGER_TOKEN`。
+
+#### 取得一个浏览器实例
+
+先在 ChromiumManager 的 Web UI（`https://<host>:3001`）里建好 profile，然后按名字取用——未运行会自动拉起并等 CDP 就绪：
+
+```bash
+curl -s -X POST "$CHROMIUM_MANAGER_URL/agent/acquire" \
+  ${CHROMIUM_MANAGER_TOKEN:+-H "Authorization: Bearer $CHROMIUM_MANAGER_TOKEN"} \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"HK-01"}'
+# {"code":200,"data":{"id":"Xk3mP9qR","cdpUrl":"http://chromium-manager:10102/cdp/Xk3mP9qR","started":true}}
+```
+
+响应里的 `cdpUrl` 就是下面各处要用的地址。`GET /agent/browsers` 可列出全部 profile 与其运行状态。
+
+#### 给 Claude Code / Codex 用（MCP）
+
+profile ID 由 ChromiumManager 在创建时生成，无法预置进镜像，因此 MCP 需在取得实例后注册：
+
+```bash
+# Claude Code
+claude mcp add chrome -- chrome-devtools-mcp --browser-url http://chromium-manager:10102/cdp/Xk3mP9qR
+```
+
+Codex 则在 `~/.codex/config.toml` 中添加：
+
+```toml
+[mcp_servers.chrome]
+command = "chrome-devtools-mcp"
+args = ["--browser-url", "http://chromium-manager:10102/cdp/Xk3mP9qR"]
+```
+
+#### 给脚本用（Playwright）
+
+```js
+const { chromium } = require('playwright')
+const browser = await chromium.connectOverCDP('http://chromium-manager:10102/cdp/Xk3mP9qR')
+const page = await browser.contexts()[0].newPage()   // contexts()[0] 带完整 Cookie 与指纹
+await page.goto('https://example.com')
+```
+
+用完后释放（`{"stop":true}` 会一并关闭浏览器）：
+
+```bash
+curl -s -X POST "$CHROMIUM_MANAGER_URL/agent/release" \
+  -H 'Content-Type: application/json' -d '{"id":"Xk3mP9qR"}'
+```
+
+#### 陷阱：localhost 不再是同一台机器
+
+远程浏览器跑在 ChromiumManager 容器里，它的 `localhost` 是它自己。让它打开 dev-box 里起的开发服务器时：
+
+- 开发服务器必须监听 `0.0.0.0`，而非默认的 `127.0.0.1`（Vite 用 `--host`）
+- URL 用 `http://dev-box:3000`，而非 `http://localhost:3000`
+
+#### 仍需要本地浏览器时
+
+`playwright test` 走的是 Playwright 自己的 server 协议而非 CDP，`connectOverCDP` 接不进去；`playwright screenshot` / `codegen` 等 CLI 子命令也只会启动本地浏览器。这类场景现装即可（系统依赖库已随镜像装好，无需 sudo）：
+
+```bash
+playwright install chromium
+```
+
+装到 `$PLAYWRIGHT_BROWSERS_PATH`（`/home/vscode/.cache/ms-playwright`），位于持久化的 home 下，重建容器不必重装。
 
 ### 日志
 

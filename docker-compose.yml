@@ -21,6 +21,12 @@ services:
       # 健康汇报间隔（秒）：周期性把僵尸进程数与 SSH 认证失败增量打进 docker logs，
       # 仅在有异常时输出。设为 0 关闭汇报。
       - HEALTH_REPORT_INTERVAL=${HEALTH_REPORT_INTERVAL:-300}
+      # ChromiumManager 的 CDP 网关地址。镜像不预装浏览器，agent 经此地址连接
+      # 带指纹与代理的远程 Chromium 实例，详见 README「浏览器：接入 ChromiumManager」。
+      # 需先与 chromium-manager 容器同网（见文件末尾 networks 注释）。
+      - CHROMIUM_MANAGER_URL=${CHROMIUM_MANAGER_URL:-http://chromium-manager:10102}
+      # ChromiumManager 设了 AGENT_TOKEN 时必须同步注入，否则 agent 接口返回 401。
+      - CHROMIUM_MANAGER_TOKEN=${CHROMIUM_MANAGER_TOKEN:-}
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
@@ -31,3 +37,25 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+# 与 ChromiumManager 组网（可选）
+# 镜像不预装浏览器，需要浏览器时经 ChromiumManager 的 CDP 网关连接。两个容器必须
+# 在同一 Docker 网络里，dev-box 才能用容器名 chromium-manager 解析到对方。
+#
+# 默认不启用：external 网络若不存在，`docker compose up` 会直接报错，这会打断
+# 只想要开发环境、不需要浏览器的用法。需要时按以下三步启用：
+#
+#   1) docker network create agentnet
+#   2) chromium-manager 侧 compose 加入同名网络（其 10102 不必 publish 到宿主机，
+#      仅同网可达即可，避免把无鉴权的 CDP 网关暴露出去）
+#   3) 取消下面两处注释后 docker compose up -d
+#
+# 反过来，若浏览器容器需要访问 dev-box 里起的开发服务器（见 README 的 localhost
+# 陷阱），同网后用 http://dev-box:<port> 即可，且服务须监听 0.0.0.0 而非 127.0.0.1。
+#
+#    networks:
+#      - agentnet
+#
+# networks:
+#   agentnet:
+#     external: true

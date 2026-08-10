@@ -34,11 +34,15 @@
   ```
 - 在镜像内验证主要工具链：
   ```bash
-  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && playwright --version && python --version && uv --version && go version && java -version && mvn --version && gradle --version && gh --version'
+  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && playwright --version && command -v chrome-devtools-mcp && python --version && uv --version && go version && java -version && mvn --version && gradle --version && gh --version'
   ```
-- 验证随镜像安装的 Chromium 可以通过 Playwright 启动：
+- 验证浏览器客户端链路（镜像不预装浏览器二进制，故只验证客户端与远程 CDP 连通性）：
   ```bash
-  docker run --rm dev-box:local bash -lc 'playwright screenshot --browser=chromium about:blank /tmp/chromium.png'
+  # 需与 chromium-manager 同网；先取一个实例，再验证 Playwright 能连上
+  docker run --rm --network agentnet dev-box:local bash -lc '
+    CDP=$(curl -s -X POST http://chromium-manager:10102/agent/acquire \
+      -H "Content-Type: application/json" -d "{\"name\":\"HK-01\"}" | jq -r .data.cdpUrl)
+    node -e "require(\"playwright\").chromium.connectOverCDP(\"$CDP\").then(b=>b.close()).then(()=>console.log(\"CDP OK\"))"'
   ```
 - 构建与 CI 相同的平台但不推送镜像：
   ```bash
@@ -47,7 +51,7 @@
 
 ## 测试和 lint
 
-本仓库没有配置语言特定的测试套件或 linter。修改 `Dockerfile` 后，优先使用 `docker build -t dev-box:local .` 作为主要验证方式；如果修改了浏览器相关层，再运行 Playwright Chromium 启动检查。本仓库没有单测试命令。
+本仓库没有配置语言特定的测试套件或 linter。修改 `Dockerfile` 后，优先使用 `docker build -t dev-box:local .` 作为主要验证方式；如果修改了浏览器相关层，再运行上文的 CDP 连通性检查（镜像已无本地浏览器，`playwright screenshot` 之类的本地启动命令不再适用）。本仓库没有单测试命令。
 
 ## 架构说明
 
@@ -71,8 +75,14 @@
 - `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
 - 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装。
 - Hermes 通过官方 `install.sh`（`--skip-setup --skip-browser --non-interactive`）安装到 `/usr/local/lib/hermes-agent`，并额外 `uv pip install python-telegram-bot`。安装后删除 gateway 非必需内容（`node_modules`、`apps`/`website`/`web`/`ui-tui`/`tests`/`.git` 等），仅保留 Python venv 与 editable 源码树供 `hermes gateway` 使用。
-- Chromium 通过 Playwright 安装到 `/ms-playwright`，以保持浏览器自动化在 `linux/amd64` 和 `linux/arm64` 构建中的兼容性。
-- 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录以及 `/ms-playwright` 会预先创建并归属给 `vscode`。
+- **镜像不预装浏览器二进制**，浏览器由独立的 ChromiumManager 容器提供，agent 与脚本经其 CDP 网关（默认 `10102`，同 Docker 网络内可达，不 publish 到宿主机）连接远程实例。镜像内只保留客户端：`playwright` npm 包（供 `chromium.connectOverCDP()`）与 `chrome-devtools-mcp`（Claude Code / Codex 的浏览器 MCP，`--browser-url` 指向 CDP 地址）。相关约束：
+  - 安装层执行的是 `playwright install-deps chromium` 而非 `playwright install --with-deps chromium`——**只装运行期系统库（libgtk-3/libnss3 等，数十 MB），不下载浏览器**。保留这些库是为了让"确需本地浏览器时"退化成一条免 sudo 的 `playwright install chromium`；删掉它们会省不了多少体积，却让现装必须 root + 联网 apt。
+  - `PLAYWRIGHT_BROWSERS_PATH` 指向 `/home/vscode/.cache/ms-playwright`（原为 `/ms-playwright`）。改到 home 下是为了让现装的浏览器落进 compose 的绑定挂载，重建容器不必重装。
+  - `chrome-devtools-mcp` 依赖全部 bundled，安装不会触发浏览器下载；不要为它补 `puppeteer`（那个包会拉浏览器）。
+  - profile ID 由 ChromiumManager 创建时生成，**无法预置进镜像**，因此 MCP 只能在运行期取得实例后注册，不要试图在 Dockerfile 里写死 `--browser-url`。
+  - 两类场景 CDP 替代不了，属已知取舍：`playwright test`（走 Playwright server 协议而非 CDP，`connectOptions` 接不进来）与 `playwright screenshot`/`codegen` 等只能启动本地浏览器的 CLI 子命令。这两类需先 `playwright install chromium` 现装。
+  - 远程浏览器的 `localhost` 是 ChromiumManager 容器自身。让它访问 dev-box 里的开发服务器时，服务须监听 `0.0.0.0`，URL 用 `http://dev-box:<port>`。
+- 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录（含供现装浏览器用的 `.cache/ms-playwright`）会预先创建并归属给 `vscode`。镜像已不再创建顶层 `/ms-playwright`。
 - `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` tag 以及手动触发 `workflow_dispatch` 时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。
 - Docker metadata tag 包括默认分支的 `latest`、分支引用、tag 引用和 `sha-*` tag。
 

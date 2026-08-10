@@ -17,6 +17,7 @@ ARG GRADLE_VERSION=9.5.1
 ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
 ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
 ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
+ARG CHROME_DEVTOOLS_MCP_NPM_PACKAGE="chrome-devtools-mcp"
 ARG VOLATILE_TOOLS_CACHE_BUST=0
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -26,7 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PNPM_HOME=/home/vscode/.local/share/pnpm \
     GOPATH=/home/vscode/go \
     HERMES_HOME=/home/vscode/.hermes \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_BROWSERS_PATH=/home/vscode/.cache/ms-playwright \
     PATH=/home/vscode/.local/share/pnpm:/opt/maven/bin:/opt/gradle/bin:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -196,28 +197,45 @@ RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main
     && rm -rf /var/lib/apt/lists/* /root/.cache/uv /root/.cache/pip /root/.npm
 
 # Install global CLIs and browser automation runtime
+#
+# 镜像刻意不预装浏览器二进制：浏览器由 ChromiumManager 容器提供，agent 经其
+# CDP 网关（默认 10102）连接已配置好指纹与代理的实例，因此本地只需要客户端库。
+#   - playwright：仅保留 npm 包（几 MB），供 chromium.connectOverCDP() 连远程浏览器。
+#   - chrome-devtools-mcp：Claude Code / Codex 的浏览器 MCP，走 --browser-url 连 CDP。
+#     其依赖全部 bundled，安装不会触发浏览器下载。
+# 仍执行 install-deps 装齐 Chromium 的运行期系统库（libgtk-3/libnss3 等，合计数十 MB）：
+# 这些库对 CDP 远程连接虽非必需，但让"需要本地浏览器时现装"退化为一条免 sudo 的
+# `playwright install chromium`（否则 install-deps 要 root 且需联网 apt）。
 RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
     && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
     "${CODEX_CLI_NPM_PACKAGE}" \
     "${PLAYWRIGHT_NPM_PACKAGE}" \
-    && playwright install --with-deps chromium \
+    "${CHROME_DEVTOOLS_MCP_NPM_PACKAGE}" \
+    && apt-get update \
+    && playwright install-deps chromium \
+    && command -v chrome-devtools-mcp >/dev/null \
     && npm cache clean --force \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Prepare vscode user environment
+# ms-playwright 目录预建并归属 vscode：镜像不带浏览器二进制，但需要本地浏览器时
+# （如 `playwright test`、`playwright screenshot` 这类只能启动本地浏览器的场景）
+# 可免 sudo 直接 `playwright install chromium` 装到这里。该路径位于 /home/vscode 下，
+# 配合 compose 的绑定挂载可跨容器重建持久化。
 RUN mkdir -p \
     /home/vscode/.local/share/pnpm \
     /home/vscode/.cache/pip \
     /home/vscode/.cache/uv \
+    /home/vscode/.cache/ms-playwright \
     /home/vscode/.hermes \
     /home/vscode/.m2 \
     /home/vscode/.gradle \
     /home/vscode/go/pkg \
     /home/vscode/go/bin \
     /workspace \
-    /ms-playwright \
-    && chown -R vscode:vscode /home/vscode /workspace /ms-playwright
+    && chown -R vscode:vscode /home/vscode /workspace
 
 COPY sshd_config_devbox /etc/ssh/sshd_config_devbox
 COPY --chmod=0755 start-with-gateway.sh /usr/local/bin/start-with-gateway
@@ -230,6 +248,7 @@ RUN corepack enable \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
     && pnpm --version \
     && playwright --version \
+    && command -v chrome-devtools-mcp \
     && python --version \
     && java -version \
     && mvn --version \
