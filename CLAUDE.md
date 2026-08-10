@@ -12,11 +12,11 @@
   ```bash
   docker build -t dev-box:local .
   ```
-- 使用显式工具链版本构建镜像：
+- 使用显式工具链版本构建镜像（版本号需与 Dockerfile 的 `ARG` 默认值对齐；注意 `NODE_VERSION` 仅在取不到 nodejs.org index 时作为 fallback 生效，见架构说明）：
   ```bash
   docker build \
-    --build-arg NODE_VERSION=24.16.0 \
-    --build-arg PNPM_VERSION=11.5.0 \
+    --build-arg NODE_VERSION=24.19.0 \
+    --build-arg PNPM_VERSION=11.20.0 \
     --build-arg GO_VERSION=1.26.3 \
     --build-arg MAVEN_VERSION=3.9.16 \
     --build-arg GRADLE_VERSION=9.5.1 \
@@ -69,7 +69,7 @@
   - gateway 用 `stdbuf -oL -eL` 强制行缓冲（Python 进程 stdout 非 tty 时默认块缓冲，日志会延迟数 KB 才出现），并加 `-v` 把级别提到 INFO。gateway 自有文件日志在 `$HERMES_HOME/logs/`，内容与 stderr 重叠，故不 tail 进 stdout 以免双份记录。
 - 脚本末尾不再是 `exec sleep infinity`，而是周期健康汇报循环（间隔由 `HEALTH_REPORT_INTERVAL` 控制，秒；`0` 关闭）。仅在异常时输出：sshd/gateway 进程消失、僵尸进程数变化、SSH 认证失败增量。认证失败计数由 `tag_stream_sshd` 累计到 `$TMPDIR/.devbox-sshd-authfail`（用文件而非变量，因为该函数运行在进程替换的子 shell 中，变量无法回传）；计数模式已去重，只匹配 `Invalid user` / `not allowed because` / `Failed publickey`，避免同一次失败连接的多行日志重复计数。此处不能用 `exec`：虽然进程替换的 FD 会被继承（日志不断流），但 shell 被替换掉后就没有进程做汇报了。
 - 镜像不预装 Docker CLI / Buildx / Compose；如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 socket。
-- 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，挂载当前目录到 `/workspace`，用绑定挂载持久化 `/home/vscode`。默认 `CMD` 为 `/usr/local/bin/start-with-gateway`（依次启动 sshd 与 Hermes gateway，最后进入健康汇报循环常驻），由上述 tini `ENTRYPOINT` 拉起，不要在 Compose 中覆盖二者。Compose 的 SSH 端口映射为 `${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22`——**默认只绑宿主机 loopback，不暴露公网**，推荐经宿主机 SSH 跳转（`ssh -J` / `ProxyJump`）连入容器，这样公网只需开放宿主机自身的 22 端口。要直接暴露需显式设 `DEVBOX_SSH_BIND=0.0.0.0`。改动此默认绑定地址等于扩大公网暴露面，需先确认。Compose 同时透传 `SSH_PUBLIC_KEY` 环境变量。
+- 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，把 `./workspace` 挂到 `/workspace`、`./.vscode` 绑定挂载持久化 `/home/vscode`。默认 `CMD` 为 `/usr/local/bin/start-with-gateway`（依次启动 sshd 与 Hermes gateway，最后进入健康汇报循环常驻），由上述 tini `ENTRYPOINT` 拉起，不要在 Compose 中覆盖二者。Compose 的 SSH 端口映射为 `${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22`——**默认只绑宿主机 loopback，不暴露公网**，推荐经宿主机 SSH 跳转（`ssh -J` / `ProxyJump`）连入容器，这样公网只需开放宿主机自身的 22 端口。要直接暴露需显式设 `DEVBOX_SSH_BIND=0.0.0.0`。改动此默认绑定地址等于扩大公网暴露面，需先确认。Compose 透传的环境变量：`SSH_PUBLIC_KEY`、`HEALTH_REPORT_INTERVAL`、`CHROMIUM_MANAGER_URL`、`CHROMIUM_MANAGER_TOKEN`；与 ChromiumManager 的组网以注释形式给出而非默认启用（`external` 网络不存在时 `compose up` 会直接失败）。
 - Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
 - Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。Node.js 安装层会先查 `nodejs.org/dist/index.json` 取最新 LTS 版本号，查不到则回退到 `NODE_VERSION` 构建参数（见架构说明第一条）。历史上 Hermes `install.sh` 会因 Node 自带 npm 落入 11.10–11.16 坏区间（无法 honor 某些 `.npmrc` 选项）而改自装 Node 并用 `ln -sf` 覆盖 `/usr/local/bin/{node,npm,npx}`，随后镜像清理删除 `${HERMES_HOME}/node` 导致这些符号链接变成死链、后续 `npm install -g` 报 `npm: command not found`。自动取最新 LTS 且 fallback 亦避开坏区间即可规避此问题。
 - `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。

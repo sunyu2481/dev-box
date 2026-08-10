@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh_volatile_tools:
-        description: 'Reinstall latest global CLIs such as Codex, Claude Code, Playwright, and Antigravity'
+        description: 'Reinstall latest global CLIs: Claude Code, Codex, Playwright, chrome-devtools-mcp'
         required: false
         default: false
         type: boolean

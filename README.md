@@ -5,14 +5,10 @@
 ## 功能特性
 
 - 基于 Ubuntu 24.04
-- Node.js 24
-- pnpm 11
-- Python
-- uv
+- Node.js（构建时自动取最新 LTS）/ pnpm
+- Python / uv
 - Go 1.26
-- Java 21
-- Maven 3.9
-- Gradle 9
+- Java 21 / Maven 3.9 / Gradle 9
 - Git / Git LFS / GitHub CLI (`gh`)
 - 浏览器自动化客户端：Playwright 库与 `chrome-devtools-mcp`（**不含浏览器二进制**，浏览器由 ChromiumManager 容器经 CDP 提供，见下文）
 - 支持 CJK、emoji 和常见网页渲染场景的浏览器字体
@@ -23,6 +19,8 @@
   - OpenAI Codex CLI
   - Hermes agent gateway（预装 Telegram adapter；镜像仅保留 gateway 运行时，不含桌面/TUI/Web UI 与浏览器工具链）
 
+> 镜像**不预装 Docker CLI / Buildx / Compose**。如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 `/var/run/docker.sock`。
+
 ## 镜像
 
 ```bash
@@ -31,7 +29,7 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 ## 发布与刷新预装工具
 
-GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。workflow 默认使用 Docker layer cache，因此未修改 `Dockerfile` 时，手动触发可能会快速命中缓存，不会重新安装 Codex、Claude Code、Playwright 这类默认安装 latest 的工具。
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。workflow 默认使用 Docker layer cache，因此未修改 `Dockerfile` 时，手动触发可能会快速命中缓存，不会重新安装 Claude Code、Codex、Playwright、chrome-devtools-mcp 这类默认安装 latest 的工具。
 
 手动运行 workflow 时：
 
@@ -280,7 +278,7 @@ environment:
 SSH 端口一旦对公网开放，就会被扫描器持续爆破。密码认证已禁用，攻击无法得手，但每条未认证连接都会派生一个 sshd 子进程，因此镜像做了两层处理：
 
 - **限流**（`sshd_config_devbox`，按单人使用调优）：`LoginGraceTime 15` 缩短挂起连接存活时间，`MaxAuthTries 3` 限制单连接认证次数，`MaxStartups 4:100:10` 未认证连接超过 4 条后即 100% 拒绝新连接、硬上限 10 条，`PerSourceMaxStartups 4` 限制单一来源 IP，`MaxSessions 4` 限制单连接内的复用会话数，`AllowUsers vscode` 让其他用户名在进入 PAM 前即被拒绝。
-- **进程回收**：镜像 `ENTRYPOINT` 为 `tini -s -g --`，作为 PID 1 回收孤儿进程。这是必需的 —— 启动脚本以 `sleep infinity` 常驻，而 `sleep` 不调用 `wait()`，若由它充当 PID 1，被收养的 sshd 子进程退出后会堆积成僵尸进程（`Z` 状态）直至耗尽 PID。
+- **进程回收**：镜像 `ENTRYPOINT` 为 `tini -s -g --`，作为 PID 1 回收孤儿进程。这是必需的 —— 被 reparent 到 PID 1 的 sshd pre-auth 子进程退出后，若 PID 1 不调用 `wait()` 就会堆积成僵尸进程（`Z` 状态）直至耗尽 PID。历史实现曾让不调用 `wait()` 的 `sleep infinity` 充当 PID 1，正是僵尸堆积的成因；现在启动脚本以健康汇报循环常驻，且回收职责统一交给 tini。`-s` 让 tini 即便被 `docker run --init` 包装成非 PID 1 也仍能收养孤儿。
 
 > 上述限流值面向单人使用。若多人共享同一出口 IP（NAT），`PerSourceMaxStartups 4` 与 `MaxStartups` 可能误伤，需相应放宽。
 
