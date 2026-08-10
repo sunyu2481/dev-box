@@ -163,6 +163,8 @@ host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名�
 
 ChromiumManager 的 agent 面默认监听 `10102`，**不要** publish 到宿主机（默认无鉴权），只需同网可达。组网步骤见 `docker-compose.yml` 末尾的 networks 注释。若 ChromiumManager 设了 `AGENT_TOKEN`，dev-box 侧同步设 `CHROMIUM_MANAGER_TOKEN`。
 
+> `CHROMIUM_MANAGER_URL` 由 compose 注入容器 ENV，但容器 ENV 只被 PID 1 的后代继承——**SSH 登入的会话不在这条链上**（sshd 经 `sudo` 启动，sudoers 的 `env_reset` 会清掉自定义变量）。启动脚本因此把这些变量写入 `/etc/environment`，靠 sshd 的 `UsePAM yes` + `pam_env` 注入 SSH 会话。若你在 SSH 会话里发现该变量为空（表现为 `curl` 返回 HTTP 000），先确认容器是否为新版镜像。
+
 #### 取得一个浏览器实例
 
 先在 ChromiumManager 的 Web UI（`https://<host>:3001`）里建好 profile，然后按名字取用——未运行会自动拉起并等 CDP 就绪：

@@ -56,6 +56,42 @@ tag_stream_sshd() {
 }
 
 # ---------------------------------------------------------------------------
+# 把容器 ENV 落盘到 /etc/environment，供 SSH 会话继承
+#
+# 背景：容器 ENV 只能被 PID 1 的后代继承。SSH 登入的会话不在这条链上——sshd 由本
+# 脚本经 `sudo` 启动，而 sudoers 的 `Defaults env_reset` 会清掉自定义变量，因此
+# SSH 会话（含其中运行的 VS Code Server 与各类 agent）拿不到 compose 注入的
+# CHROMIUM_MANAGER_URL 等值，表现为 `curl "$CHROMIUM_MANAGER_URL/..."` 打到空地址。
+#
+# sshd 配置为 `UsePAM yes`，而 Ubuntu 的 /etc/pam.d/sshd 链中含 pam_env.so，会读
+# /etc/environment 并注入会话，故在此写入即可打通。只导出白名单内的变量，避免把
+# SSH_PUBLIC_KEY 这类敏感值写进所有用户可读的文件。
+#
+# 注意格式：pam_env 解析的是 KEY=VALUE 的简单赋值，不支持 shell 展开与续行。
+# ---------------------------------------------------------------------------
+export_env_for_ssh() {
+  local envfile=/etc/environment var val
+  # 先剔除本脚本此前写入的块，避免容器重启后重复堆积
+  sudo sed -i '/^# >>> dev-box runtime env >>>$/,/^# <<< dev-box runtime env <<<$/d' "$envfile" 2>/dev/null || true
+
+  local block="# >>> dev-box runtime env >>>"
+  for var in CHROMIUM_MANAGER_URL CHROMIUM_MANAGER_TOKEN PLAYWRIGHT_BROWSERS_PATH; do
+    val="${!var:-}"
+    [ -z "$val" ] && continue
+    # 含换行或双引号的值直接跳过：pam_env 无法正确解析，写入反而制造难查的故障
+    case "$val" in *[$'\n"']*) log "跳过导出 $var（值含换行或引号，pam_env 不支持）"; continue ;; esac
+    block+=$'\n'"${var}=\"${val}\""
+  done
+  block+=$'\n'"# <<< dev-box runtime env <<<"
+
+  printf '%s\n' "$block" | sudo tee -a "$envfile" >/dev/null 2>&1 \
+    && log "已导出运行时环境变量到 $envfile（供 SSH 会话继承）" \
+    || log "警告：写入 $envfile 失败，SSH 会话可能取不到 CHROMIUM_MANAGER_URL 等变量"
+}
+
+export_env_for_ssh
+
+# ---------------------------------------------------------------------------
 # SSH 服务：仅公钥认证，host key 持久化在 /home/vscode（命名卷/绑定挂载保留）
 # 通过环境变量 SSH_PUBLIC_KEY 注入公钥，或直接挂载 ~/.ssh/authorized_keys
 # ---------------------------------------------------------------------------
