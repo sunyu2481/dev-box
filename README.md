@@ -177,7 +177,7 @@ curl -s -X POST "$CHROMIUM_MANAGER_URL/agent/acquire" \
 # {"code":200,"data":{"id":"Xk3mP9qR","cdpUrl":"http://chromium-manager:10102/cdp/Xk3mP9qR","started":true}}
 ```
 
-响应里的 `cdpUrl` 就是下面各处要用的地址。`GET /agent/browsers` 可列出全部 profile 与其运行状态。
+响应里的 `cdpUrl` 就是下面各处要用的地址。`HK-01` 只是示例，需替换为你在 ChromiumManager 里实际建好的 profile 名；不确定有哪些时先 `GET /agent/browsers` 列出全部 profile 与其运行状态（名字不存在时 acquire 返回 404）。
 
 #### 给 Claude Code / Codex 用（MCP）
 

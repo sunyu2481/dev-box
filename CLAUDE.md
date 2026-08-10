@@ -38,7 +38,8 @@
   ```
 - 验证浏览器客户端链路（镜像不预装浏览器二进制，故只验证客户端与远程 CDP 连通性）：
   ```bash
-  # 需与 chromium-manager 同网；先取一个实例，再验证 Playwright 能连上
+  # 需与 chromium-manager 同网；先取一个实例，再验证 Playwright 能连上。
+  # HK-01 需替换为实际 profile 名（`GET /agent/browsers` 可列出，名字不存在则返回 404）
   docker run --rm --network agentnet dev-box:local bash -lc '
     CDP=$(curl -s -X POST http://chromium-manager:10102/agent/acquire \
       -H "Content-Type: application/json" -d "{\"name\":\"HK-01\"}" | jq -r .data.cdpUrl)
