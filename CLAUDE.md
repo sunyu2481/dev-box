@@ -75,11 +75,13 @@
 - `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
 - 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装。
 - Hermes 通过官方 `install.sh`（`--skip-setup --skip-browser --non-interactive`）安装到 `/usr/local/lib/hermes-agent`，并额外 `uv pip install python-telegram-bot`。安装后删除 gateway 非必需内容（`node_modules`、`apps`/`website`/`web`/`ui-tui`/`tests`/`.git` 等），仅保留 Python venv 与 editable 源码树供 `hermes gateway` 使用。
-- **镜像不预装浏览器二进制**，浏览器由独立的 ChromiumManager 容器提供，agent 与脚本经其 CDP 网关（默认 `10102`，同 Docker 网络内可达，不 publish 到宿主机）连接远程实例。镜像内只保留客户端：`playwright` npm 包（供 `chromium.connectOverCDP()`）与 `chrome-devtools-mcp`（Claude Code / Codex 的浏览器 MCP，`--browser-url` 指向 CDP 地址）。相关约束：
+- **镜像不预装浏览器二进制**，浏览器由独立的 ChromiumManager 容器提供，agent 与脚本经其 CDP 网关（默认 `10102`，同 Docker 网络内可达，不 publish 到宿主机）连接远程实例。镜像内只保留客户端：`playwright` npm 包（供 `chromium.connectOverCDP()`）与 `chrome-devtools-mcp`（Claude Code / Codex 的浏览器 MCP，用 `--wsEndpoint` 指向 ws 地址）。相关约束：
+  - **`chrome-devtools-mcp` 必须用 `--wsEndpoint`，不能用 `--browser-url`。** 其内部（`build/src/third_party/index.js`）以 `new URL('/json/version', browserURL)` 推导端点，绝对路径参数会替换掉 base 的整个 path，`/cdp/<id>` 前缀被丢弃 → 请求落到网关根路径 404。属 puppeteer 固有行为，对任何带路径前缀的 CDP 网关都成立，改注册写法无法绕过。ws 地址从 `curl "$CDP/json/version" | jq -r .webSocketDebuggerUrl` 取得（网关已重写为带前缀形式）。Playwright 的 `connectOverCDP()` 不受此影响，可直接用 cdpUrl。
+  - ws 地址含浏览器会话 ID，浏览器重启后失效需重新注册；profile ID 则在重启后保持稳定。
   - 安装层执行的是 `playwright install-deps chromium` 而非 `playwright install --with-deps chromium`——**只装运行期系统库（libgtk-3/libnss3 等，数十 MB），不下载浏览器**。保留这些库是为了让"确需本地浏览器时"退化成一条免 sudo 的 `playwright install chromium`；删掉它们会省不了多少体积，却让现装必须 root + 联网 apt。
   - `PLAYWRIGHT_BROWSERS_PATH` 指向 `/home/vscode/.cache/ms-playwright`（原为 `/ms-playwright`）。改到 home 下是为了让现装的浏览器落进 compose 的绑定挂载，重建容器不必重装。
   - `chrome-devtools-mcp` 依赖全部 bundled，安装不会触发浏览器下载；不要为它补 `puppeteer`（那个包会拉浏览器）。
-  - profile ID 由 ChromiumManager 创建时生成，**无法预置进镜像**，因此 MCP 只能在运行期取得实例后注册，不要试图在 Dockerfile 里写死 `--browser-url`。
+  - profile ID 由 ChromiumManager 创建时生成，**无法预置进镜像**，因此 MCP 只能在运行期取得实例后注册，不要试图在 Dockerfile 里写死 CDP 或 ws 地址。
   - 两类场景 CDP 替代不了，属已知取舍：`playwright test`（走 Playwright server 协议而非 CDP，`connectOptions` 接不进来）与 `playwright screenshot`/`codegen` 等只能启动本地浏览器的 CLI 子命令。这两类需先 `playwright install chromium` 现装。
   - 远程浏览器的 `localhost` 是 ChromiumManager 容器自身。让它访问 dev-box 里的开发服务器时，服务须监听 `0.0.0.0`，URL 用 `http://dev-box:<port>`。
 - 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录（含供现装浏览器用的 `.cache/ms-playwright`）会预先创建并归属给 `vscode`。镜像已不再创建顶层 `/ms-playwright`。

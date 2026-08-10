@@ -179,20 +179,22 @@ curl -s -X POST "$CHROMIUM_MANAGER_URL/agent/acquire" \
 
 #### 给 Claude Code / Codex 用（MCP）
 
-profile ID 由 ChromiumManager 在创建时生成，无法预置进镜像，因此 MCP 需在取得实例后注册：
+profile ID 由 ChromiumManager 在创建时生成，无法预置进镜像，因此 MCP 需在取得实例后注册。
+
+**必须用 `--wsEndpoint`，不能用 `--browser-url`。** `chrome-devtools-mcp` 内部以 `new URL('/json/version', browserURL)` 推导端点，第一个参数是绝对路径，会替换掉 base 的整个 path——`/cdp/<id>` 前缀被丢弃，请求打到网关根路径直接 404。这是 puppeteer 的固有行为，任何带路径前缀的 CDP 网关都受影响。`--wsEndpoint` 跳过这段拼接，而 ChromiumManager 的 `/json/version` 已把 `webSocketDebuggerUrl` 重写为带前缀的形式，可直接取用：
 
 ```bash
-# Claude Code
-claude mcp add chrome -- chrome-devtools-mcp --browser-url http://chromium-manager:10102/cdp/Xk3mP9qR
+CDP=http://chromium-manager:10102/cdp/Xk3mP9qR
+WS=$(curl -s "$CDP/json/version" | jq -r .webSocketDebuggerUrl)
+
+# Claude Code（--scope user 让全部项目可用）
+claude mcp add --scope user chrome -- chrome-devtools-mcp --wsEndpoint "$WS"
+
+# Codex
+codex mcp add chrome -- chrome-devtools-mcp --wsEndpoint "$WS"
 ```
 
-Codex 则在 `~/.codex/config.toml` 中添加：
-
-```toml
-[mcp_servers.chrome]
-command = "chrome-devtools-mcp"
-args = ["--browser-url", "http://chromium-manager:10102/cdp/Xk3mP9qR"]
-```
+ws 地址含浏览器会话 ID（`/devtools/browser/<uuid>`），**浏览器重启后会变**，需重新取值并重新注册；profile ID 本身则是稳定的。
 
 #### 给脚本用（Playwright）
 
