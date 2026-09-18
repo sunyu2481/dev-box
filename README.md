@@ -67,6 +67,14 @@ docker compose down
 
 `docker compose down` 不会删除绑定挂载目录，因此 `./workspace` 和 `./.vscode` 下的数据会保留下来。
 
+需要让容器内的命令行工具经代理出口时，用宿主机环境变量注入即可，compose 会把 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 透传进容器：
+
+```bash
+HTTP_PROXY=http://proxy.example.com:8080 HTTPS_PROXY=http://proxy.example.com:8080 docker compose up -d
+```
+
+这三个变量由启动脚本写入 `/etc/environment`，因此 SSH 会话（含其中的 VS Code Server 与各类 agent）同样能读到，而不是只对 PID 1 的后代生效。注意 `/etc/environment` 对所有用户可读，代理 URL 若含凭据（形如 `http://user:pass@host:port`）会一并暴露给容器内任意用户。
+
 ### 使用 docker run 启动
 
 也可以直接启动交互式 shell：
@@ -164,6 +172,8 @@ host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名�
 ChromiumManager 的 agent 面默认监听 `10102`，**不要** publish 到宿主机（默认无鉴权），只需同网可达。组网步骤见 `docker-compose.yml` 末尾的 networks 注释。若 ChromiumManager 设了 `AGENT_TOKEN`，dev-box 侧同步设 `CHROMIUM_MANAGER_TOKEN`。
 
 > `CHROMIUM_MANAGER_URL` 由 compose 注入容器 ENV，但容器 ENV 只被 PID 1 的后代继承——**SSH 登入的会话不在这条链上**（sshd 经 `sudo` 启动，sudoers 的 `env_reset` 会清掉自定义变量）。启动脚本因此把这些变量写入 `/etc/environment`，靠 sshd 的 `UsePAM yes` + `pam_env` 注入 SSH 会话。若你在 SSH 会话里发现该变量为空（表现为 `curl` 返回 HTTP 000），先确认容器是否为新版镜像。
+
+`/etc/environment` 的白名单内还包括 `PLAYWRIGHT_BROWSERS_PATH`，以及代理变量 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`（用法见「使用 Docker Compose 启动」）。
 
 #### 取得一个浏览器实例
 

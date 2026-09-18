@@ -67,6 +67,10 @@ tag_stream_sshd() {
 # /etc/environment 并注入会话，故在此写入即可打通。只导出白名单内的变量，避免把
 # SSH_PUBLIC_KEY 这类敏感值写进所有用户可读的文件。
 #
+# 代理变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）同样纳入白名单，使 SSH 会话里的
+# curl / npm / git 等能走宿主机注入的代理。注意 /etc/environment 全用户可读，若代理
+# URL 含凭据（形如 http://user:pass@host:port），这些凭据对容器内任意用户可见。
+#
 # 注意格式：pam_env 解析的是 KEY=VALUE 的简单赋值，不支持 shell 展开与续行。
 # ---------------------------------------------------------------------------
 export_env_for_ssh() {
@@ -75,7 +79,9 @@ export_env_for_ssh() {
   sudo sed -i '/^# >>> dev-box runtime env >>>$/,/^# <<< dev-box runtime env <<<$/d' "$envfile" 2>/dev/null || true
 
   local block="# >>> dev-box runtime env >>>"
-  for var in CHROMIUM_MANAGER_URL CHROMIUM_MANAGER_TOKEN PLAYWRIGHT_BROWSERS_PATH; do
+  for var in \
+    CHROMIUM_MANAGER_URL CHROMIUM_MANAGER_TOKEN PLAYWRIGHT_BROWSERS_PATH \
+    HTTP_PROXY HTTPS_PROXY NO_PROXY; do
     val="${!var:-}"
     [ -z "$val" ] && continue
     # 含换行或双引号的值直接跳过：pam_env 无法正确解析，写入反而制造难查的故障

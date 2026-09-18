@@ -27,6 +27,11 @@ services:
       - CHROMIUM_MANAGER_URL=${CHROMIUM_MANAGER_URL:-http://chromium-manager:10102}
       # ChromiumManager 设了 AGENT_TOKEN 时必须同步注入，否则 agent 接口返回 401。
       - CHROMIUM_MANAGER_TOKEN=${CHROMIUM_MANAGER_TOKEN:-}
+      # 代理设置：启动脚本会把这三个变量写入 /etc/environment 供 SSH 会话继承
+      # （仅挂在容器 ENV 上时，SSH 登入的会话取不到）。留空即不导出。
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
