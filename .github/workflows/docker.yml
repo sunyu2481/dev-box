@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh_volatile_tools:
-        description: '刷新 Claude Code、Codex、Playwright 和 chrome-devtools-mcp，复用工具链缓存'
+        description: '刷新 cc-connect 测试版、Claude Code、Codex、Playwright 和 chrome-devtools-mcp，复用工具链缓存'
         required: false
         default: false
         type: boolean
@@ -37,6 +37,15 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
+
+      # 每次构建前解析一次，两个架构使用同一版本，新版本自动使安装缓存失效。
+      - name: 解析 cc-connect 最新测试版
+        id: cc_connect
+        run: |
+          CC_CONNECT_VERSION=$(curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 https://registry.npmjs.org/-/package/cc-connect/dist-tags \
+            | jq -er '.beta | select(type == "string") | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$"))')
+          printf '解析到 cc-connect 测试版：%s\n' "$CC_CONNECT_VERSION"
+          printf 'version=%s\n' "$CC_CONNECT_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: 配置跨架构模拟
         uses: docker/setup-qemu-action@v3
@@ -84,6 +93,7 @@ jobs:
           sbom: false
           no-cache: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.no_cache) }}
           build-args: |
+            CC_CONNECT_VERSION=${{ steps.cc_connect.outputs.version }}
             VOLATILE_TOOLS_CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && inputs.refresh_volatile_tools && github.run_id || '0' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

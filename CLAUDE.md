@@ -21,6 +21,7 @@
     --build-arg MAVEN_VERSION=3.10.0 \
     --build-arg GRADLE_VERSION=9.8.2 \
     --build-arg UV_VERSION=0.13.5 \
+    --build-arg CC_CONNECT_VERSION=beta \
     -t dev-box:local .
   ```
 - 在已构建镜像中启动交互式 shell：
@@ -35,7 +36,7 @@
   ```
 - 在镜像内验证主要工具链：
   ```bash
-  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && playwright --version && command -v chrome-devtools-mcp && python --version && uv --version && go version && java -version && mvn --version && gradle --version && gh --version'
+  docker run --rm dev-box:local bash -lc 'node --version && pnpm --version && cc-connect --version && playwright --version && command -v chrome-devtools-mcp && python --version && uv --version && go version && java -version && mvn --version && gradle --version && gh --version'
   ```
 - 验证浏览器客户端链路（镜像不预装浏览器二进制，故只验证客户端与远程 CDP 连通性）：
   ```bash
@@ -53,7 +54,7 @@
 
 ## 测试和 lint
 
-本仓库没有配置语言特定的测试套件或 linter。修改 `Dockerfile` 后，优先使用 `docker build -t dev-box:local .` 作为主要验证方式；如果修改了浏览器相关层，再运行上文的 CDP 连通性检查（镜像已无本地浏览器，`playwright screenshot` 之类的本地启动命令不再适用）。本仓库没有单测试命令。
+修改 `Dockerfile` 后，优先使用 `docker build -t dev-box:local .` 作为主要验证方式；如果修改了浏览器相关层，再运行上文的 CDP 连通性检查（镜像已无本地浏览器，`playwright screenshot` 之类的本地启动命令不再适用）。修改聊天桥接或启动脚本后，运行 `docker run --rm -i dev-box:local node < tests/cc-connect-smoke.cjs`：在无挂载的临时容器中验证开关、错误配置、服务退出、日志排空、双项目模拟 OneBot 通道与真实 SSH 登录，不调用模型或真实聊天平台。不要给该测试容器挂载实际 home 或宿主机目录。
 
 ## 架构说明
 
@@ -76,6 +77,9 @@
 - Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。Node.js 安装层会先查 `nodejs.org/dist/index.json` 取最新 LTS 版本号，查不到则回退到 `NODE_VERSION` 构建参数（见架构说明第一条）。
 - `uv` 通过 `${UV_VERSION}` 对应的 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
 - 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装。
+- `cc-connect` 默认 `CC_CONNECT_VERSION=beta`，查询 npm 官方 `beta` 发布标签后，从对应 GitHub Release 下载 `linux/amd64` 或 `linux/arm64` 二进制，校验同版本 `checksums.txt` 后安装到 `/usr/local/bin`。也可传入具体版本号回退。CI 每次构建前解析一次版本并传入构建参数，保证两个架构版本一致且新版本使安装缓存失效。本地默认查询仅在安装层重新执行时发生；查询失败直接终止，不回退到旧版。示例配置位于 `/usr/local/share/cc-connect/config.example.toml`，用户复制到 home 后填写，不能把机器人密钥放进镜像。
+- 聊天桥接仅在 `CC_CONNECT_ENABLED=1` 时启动，`CC_CONNECT_CONFIG` 指定容器内配置路径（默认 `/home/vscode/.cc-connect/config.toml`）。进程以 vscode 运行，继承容器环境，日志用进程替换汇聚为 `[cc-connect]`。启用后配置缺失或进程退出时容器失败退出；`wait -n` 同时等待服务与健康汇报计时，即使 `HEALTH_REPORT_INTERVAL=0` 也检测桥接退出。终止信号通过退出处理通知服务，日志读取进程忽略终止信号并排空输出，Compose 的 `stop_grace_period` 为 30 秒。不要改成管道或 systemd daemon，不要让关闭健康汇报隐藏桥接失败。
+- 聊天配置与状态随 home 挂载持久化。示例配置 Codex `backend = "app_server"`、`app_server_url = "stdio://"`，避免监听冲突并允许聊天审批；默认 `exec` 后端无交互审批。平台 `allow_from` 必须明确填写，空或 `*` 为允许全部；项目层 `admin_from` 留空时禁止管理命令。密钥可经权限受限的配置或可选 `env_file` 注入，不扩展 `/etc/environment` 的敏感变量白名单。
 - **镜像不预装浏览器二进制**，浏览器由独立的 ChromiumManager 容器提供，agent 与脚本经其 CDP 网关（默认 `10102`，同 Docker 网络内可达，不 publish 到宿主机）连接远程实例。镜像内只保留客户端：`playwright` npm 包（供 `chromium.connectOverCDP()`）与 `chrome-devtools-mcp`（Claude Code / Codex 的浏览器 MCP，用 `--wsEndpoint` 指向 ws 地址）。相关约束：
   - **`chrome-devtools-mcp` 必须用 `--wsEndpoint`，不能用 `--browser-url`。** 其内部（`build/src/third_party/index.js`）以 `new URL('/json/version', browserURL)` 推导端点，绝对路径参数会替换掉 base 的整个 path，`/cdp/<id>` 前缀被丢弃 → 请求落到网关根路径 404。属 puppeteer 固有行为，对任何带路径前缀的 CDP 网关都成立，改注册写法无法绕过。ws 地址从 `curl "$CDP/json/version" | jq -r .webSocketDebuggerUrl` 取得（网关已重写为带前缀形式）。Playwright 的 `connectOverCDP()` 不受此影响，可直接用 cdpUrl。
   - ws 地址含浏览器会话 ID，浏览器重启后失效需重新注册；profile ID 则在重启后保持稳定。
@@ -88,7 +92,7 @@
 - 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录（含供现装浏览器用的 `.cache/ms-playwright`）会预先创建并归属给 `vscode`。镜像已不再创建顶层 `/ms-playwright`。
 - `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` 标签、手动触发 `workflow_dispatch` 以及每周定时构建时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。
 - Docker metadata tag 包括默认分支的 `latest`、分支引用、tag 引用和 `sha-*` tag；定时任务在默认分支运行并沿用这些标签，不额外生成 nightly 标签。每次构建设置 `pull: true`；每周一北京时间 11:17 的定时任务绕过全部缓存，刷新系统安全补丁、Node.js LTS、GitHub CLI 和全局命令行工具。
-- `VOLATILE_TOOLS_CACHE_BUST` 及四个 npm 包参数在全局命令行工具安装层之前声明。手动勾选 `refresh_volatile_tools` 只使该层及后续层失去缓存；系统与工具链缓存可以复用。完整安全刷新应勾选 `no_cache` 或运行 `docker build --pull --no-cache -t dev-box:local .`。
+- `VOLATILE_TOOLS_CACHE_BUST` 在 cc-connect 安装层之前声明，四个 npm 包参数在全局命令行工具安装层之前声明。手动勾选 `refresh_volatile_tools` 使 cc-connect 层及后续层失去缓存，同时刷新聊天桥接和全局 CLI；系统与工具链缓存可以复用。完整安全刷新应勾选 `no_cache` 或运行 `docker build --pull --no-cache -t dev-box:local .`。
 
 ## 变更指引
 

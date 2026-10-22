@@ -6,6 +6,7 @@ set -u
 # 因此 `docker logs` 能看到全部日志。每行前缀 `<时间戳> [来源]` 以区分应用：
 #   [init]    本启动脚本自身
 #   [sshd]    OpenSSH 服务（含认证成功/失败，用于发现爆破）
+#   [cc-connect] 聊天桥接与代理会话
 #
 # 时间戳用 bash 内建 printf '%(...)T'（bash 4.2+），避免每行 fork 一次 date。
 # 注意 tag_stream 中不能用 `while read | printf` 之外的重量级方案：sshd 在被
@@ -25,6 +26,8 @@ log() { printf '%s [init] %s\n' "$(log_ts)" "$*"; }
 # IFS= 与 -r 保证原始行内容不被改写；末行无换行时 [ -n "$line" ] 兜底输出。
 tag_stream() {
   local tag="$1" line
+  # tini 会向整个进程组发终止信号；日志读取端应继续排空，直到服务关闭写端。
+  trap '' TERM INT
   while IFS= read -r line || [ -n "$line" ]; do
     printf '%s [%s] %s\n' "$(log_ts)" "$tag" "$line"
   done
@@ -42,6 +45,7 @@ tag_stream() {
 # 用文件而非变量传递：本函数跑在子 shell（进程替换）里，变量无法回传父进程。
 tag_stream_sshd() {
   local line
+  trap '' TERM INT
   while IFS= read -r line || [ -n "$line" ]; do
     printf '%s [sshd] %s\n' "$(log_ts)" "$line"
     case "$line" in
@@ -53,6 +57,25 @@ tag_stream_sshd() {
     esac
   done
 }
+
+# 退出时通知服务并等待清理；保留 shell，直到日志写端关闭。
+cc_connect_pid=""
+sshd_pid=""
+sleep_pid=""
+shutdown_services() {
+  local status=$?
+  trap - EXIT
+  trap '' TERM INT
+  [ -n "$sleep_pid" ] && kill -TERM "$sleep_pid" 2>/dev/null || true
+  [ -n "$cc_connect_pid" ] && kill -TERM "$cc_connect_pid" 2>/dev/null || true
+  [ -n "$sshd_pid" ] && sudo -n kill -TERM "$sshd_pid" 2>/dev/null || true
+  [ -n "$cc_connect_pid" ] && wait "$cc_connect_pid" 2>/dev/null || true
+  [ -n "$sshd_pid" ] && wait "$sshd_pid" 2>/dev/null || true
+  exit "$status"
+}
+trap shutdown_services EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 # ---------------------------------------------------------------------------
 # 把容器 ENV 落盘到 /etc/environment，供 SSH 会话继承
@@ -175,7 +198,31 @@ else
   log "未配置 SSH 公钥（设置 SSH_PUBLIC_KEY、挂载 ~/.ssh/*.pub 或 ~/.ssh/authorized_keys），跳过 sshd 启动"
 fi
 
-log "初始化完成，容器进入常驻状态；SSH 日志以 [sshd] 前缀标记"
+# ---------------------------------------------------------------------------
+# 聊天桥接：按开关运行，不经 sudo，继承容器环境与 vscode 的代理认证。
+# 配置由用户填写；缺失或启动失败时退出，让容器状态明确暴露故障。
+# ---------------------------------------------------------------------------
+case "${CC_CONNECT_ENABLED:-0}" in
+  0) ;;
+  1)
+    cc_connect_config="${CC_CONNECT_CONFIG:-$HOME/.cc-connect/config.toml}"
+    if [ ! -s "$cc_connect_config" ] || [ ! -r "$cc_connect_config" ]; then
+      log "错误：已启用 cc-connect，但配置不可读或为空：$cc_connect_config；请先按 README 完成配置"
+      exit 1
+    fi
+    if ! command -v cc-connect >/dev/null 2>&1; then
+      log "错误：已启用 cc-connect，但镜像中找不到该命令"
+      exit 1
+    fi
+    # 进程替换保证该变量跟踪服务自身，而不是日志读取进程。
+    cc-connect --config "$cc_connect_config" > >(tag_stream cc-connect) 2>&1 &
+    cc_connect_pid=$!
+    log "已启动 cc-connect，配置：$cc_connect_config；运行日志以 [cc-connect] 前缀标记"
+    ;;
+  *) log "错误：CC_CONNECT_ENABLED 只接受 0 或 1"; exit 1 ;;
+esac
+
+log "初始化完成，容器进入常驻状态；服务日志以 [sshd]/[cc-connect] 前缀标记"
 
 # ---------------------------------------------------------------------------
 # 常驻 + 周期健康汇报
@@ -188,13 +235,19 @@ log "初始化完成，容器进入常驻状态；SSH 日志以 [sshd] 前缀标
 # 掉 shell 后虽然 FD 被继承（已验证日志不断流），但 shell 一走就没人做汇报了。
 # 循环本身开销极低（默认 5 分钟一次，无变化时不输出）。
 #
-# HEALTH_REPORT_INTERVAL=0 可关闭汇报，此时退化为纯 sleep 常驻。
+# HEALTH_REPORT_INTERVAL=0 关闭周期汇报，但仍等待并检查聊天桥接进程退出。
 # ---------------------------------------------------------------------------
 report_interval="${HEALTH_REPORT_INTERVAL:-300}"
 
-if [ "$report_interval" -le 0 ] 2>/dev/null; then
+case "$report_interval" in
+  ''|*[!0-9]*) log "错误：HEALTH_REPORT_INTERVAL 必须为非负整数"; exit 1 ;;
+esac
+# 转成十进制，避免带前导零的值被算术展开当作八进制。
+report_interval=$((10#$report_interval))
+sleep_interval="$report_interval"
+if [ "$report_interval" -eq 0 ]; then
   log "健康汇报已关闭（HEALTH_REPORT_INTERVAL=$report_interval）"
-  while :; do sleep 3600; done
+  sleep_interval=3600
 fi
 
 prev_zombies=0
@@ -208,7 +261,24 @@ read_authfail() {
 }
 
 while :; do
-  sleep "$report_interval"
+  # 同时等待服务退出与汇报计时；关闭健康汇报也不能隐藏聊天桥接故障。
+  sleep "$sleep_interval" &
+  sleep_pid=$!
+  wait_status=0
+  exited_pid=""
+  if [ -n "$cc_connect_pid" ]; then
+    wait -n -p exited_pid "$cc_connect_pid" "$sleep_pid" || wait_status=$?
+    if [ "${exited_pid:-}" = "$cc_connect_pid" ] || ! kill -0 "$cc_connect_pid" 2>/dev/null; then
+      log "错误：cc-connect 进程已退出（退出码 $wait_status）；容器退出，请检查 [cc-connect] 日志并修正配置后重启"
+      # 服务自行正常退出同样意味着桥接中断，容器应以失败状态退出。
+      [ "$wait_status" -ne 0 ] || wait_status=1
+      exit "$wait_status"
+    fi
+  else
+    wait "$sleep_pid" || true
+  fi
+  sleep_pid=""
+  [ "$report_interval" -eq 0 ] && continue
 
   zombies="$(count_zombies)"
   zombies="${zombies:-0}"

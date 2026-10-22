@@ -17,6 +17,7 @@
 - AI CLI 工具：
   - Claude Code
   - OpenAI Codex CLI
+- 聊天桥接：[cc-connect](https://github.com/chenhg5/cc-connect)，可连接 Telegram、飞书、微信与 QQ；按需启用，见下文
 
 > 镜像**不预装 Docker CLI / Buildx / Compose**。如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 `/var/run/docker.sock`。
 
@@ -28,16 +29,16 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 ## 发布与刷新预装工具
 
-GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI 和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每次构建前查询 cc-connect 官方 `beta` 通道，两个架构安装同一测试版，新版本发布后自动使该安装层及后续层缓存失效。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI、cc-connect 最新测试版和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
 
 每次构建都会拉取基础镜像；系统安装层会更新基础镜像中已有的软件包。普通推送和手动构建仍使用构建层缓存，因此仅拉取基础镜像不能保证所有安装层重新执行。pnpm、Go、Maven、Gradle 和 uv 的默认版本固定在 `Dockerfile` 的构建参数中，升级这些工具需要修改对应参数。
 
 手动运行 workflow 时：
 
-- 只想刷新 Codex 等未固定版本的全局 CLI，勾选 `refresh_volatile_tools`。
+- 想刷新 cc-connect 测试版和 Codex 等未固定版本的全局 CLI，勾选 `refresh_volatile_tools`。
 - 需要完整绕过所有 Docker 构建缓存，勾选 `no_cache`。
 
-`refresh_volatile_tools` 参数在全局命令行工具安装层之前声明，刷新时可以复用前面的系统与工具链安装缓存。需要刷新系统安全补丁、Node.js 或 GitHub CLI 时，请使用 `no_cache`。
+`refresh_volatile_tools` 参数在 cc-connect 安装层之前声明，刷新时可以复用前面的系统与工具链安装缓存。需要刷新系统安全补丁、Node.js 或 GitHub CLI 时，请使用 `no_cache`。
 
 本地完整重建：
 
@@ -67,7 +68,7 @@ docker compose up -d --force-recreate
 docker compose up -d
 ```
 
-容器通过 `tini` 执行 `start-dev-box`，检测到授权公钥后启动 SSH 服务，再进入健康汇报循环常驻。
+容器通过 `tini` 执行 `start-dev-box`，检测到授权公钥后启动 SSH 服务，按开关启动聊天桥接，再进入健康汇报循环常驻。
 
 进入容器：
 
@@ -177,6 +178,65 @@ host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名�
 
 > SSH 服务以 root 权限通过 `vscode` 用户的 `sudo` 启动；将端口暴露到公网前，请确认注入的是受信任的公钥。
 
+### 聊天：接入 cc-connect
+
+镜像预装 cc-connect 官方 `beta` 通道的**最新测试版**，从对应 GitHub 发行包安装并校验 SHA256，支持 `linux/amd64` 和 `linux/arm64`。CI 每次构建前解析具体版本并传给两个架构；Dockerfile 默认 `CC_CONNECT_VERSION=beta`，本地在安装层重新执行时查询该通道。版本查询失败或发行包、校验文件缺失时构建失败，不回退到旧版。
+
+本地构建可能复用旧安装层；需要更新时传入新的 `VOLATILE_TOOLS_CACHE_BUST`，或使用 `--no-cache`。也可通过 `--build-arg CC_CONNECT_VERSION=1.5.1-beta.3` 指定版本以回退。容器运行期间不会自动升级，安装版本可用 `cc-connect --version` 查看。
+
+默认 `CC_CONNECT_ENABLED=0`。程序以 `vscode` 用户运行，读取同一用户的代理配置、认证和 MCP 注册；需先让 `codex`、`claude` 在容器内正常工作。聊天会话独立创建，与终端中正在运行的会话分别管理。
+
+| 渠道 | 配置类型 | 前置条件 |
+| --- | --- | --- |
+| Telegram | `telegram` | BotFather 创建的机器人 Token，长轮询；网络需能访问 Telegram |
+| 飞书 | `feishu` | 应用凭证、消息权限和已发布应用，长连接 |
+| 微信个人号 | `weixin` | ilink 手机扫码或 Token，能力与登录状态受网关限制 |
+| 企业微信 | `wecom` | 推荐智能机器人长连接；自建应用 Webhook 模式需要公网回调 |
+| QQ 官方机器人 | `qqbot` | 开放平台应用及权限，群消息通常需要 @机器人 |
+| QQ 账号 | `qq` | 另行部署 NapCat 等 OneBot 实现，存在账号风控风险 |
+
+准备配置（先启动容器，再执行）：
+
+```bash
+docker compose exec dev-box bash -lc '
+  install -d -m 700 "$HOME/.cc-connect"
+  if [ ! -e "$HOME/.cc-connect/config.toml" ]; then
+    install -m 600 /usr/local/share/cc-connect/config.example.toml "$HOME/.cc-connect/config.toml"
+  fi
+  vim "$HOME/.cc-connect/config.toml"
+'
+```
+
+示例默认是 Codex + Telegram，填写机器人凭证与本人用户 ID，并按实际项目设置 `work_dir`。启用其他渠道时取消对应片段的注释；只用其他渠道时删除 Telegram 片段。启用 Claude 的第二个项目时使用独立机器人，避免同一 Token 被多个项目同时消费。完整上游配置可用 `cc-connect config example` 查看。
+
+Codex 示例设置 `backend = "app_server"`、`app_server_url = "stdio://"` 和 `mode = "suggest"`，工具审批可通过聊天返回，且不需要额外监听端口。默认 `exec` 后端没有交互审批通道，`suggest` 使用只读沙箱，`auto-edit` / `full-auto` 使用工作区写入沙箱，并自动拒绝需要额外审批的操作；不能按上游示例注释理解为逐次询问。Claude 示例使用 `mode = "default"`。
+
+每个渠道都应填写明确的 `allow_from`，空值或 `"*"` 允许所有用户。需要 `/shell`、`/dir` 等管理命令时，在 `[[projects]]` 层填写 `admin_from`；它留空时管理命令被拒绝。代理具有该用户的文件和命令权限，镜像中的 `vscode` 还具备免密码 sudo，机器人仅应开放给受信任用户。
+
+飞书和微信可使用内置配置命令（写回同一配置文件）：
+
+```bash
+docker compose exec dev-box cc-connect feishu setup --config /home/vscode/.cc-connect/config.toml --project codex
+docker compose exec dev-box cc-connect weixin setup --config /home/vscode/.cc-connect/config.toml --project codex
+```
+
+扫码后核对凭证和 `allow_from`。微信首次连接后，先由允许的账号发送一条消息以建立回复上下文。各平台详细步骤见 [飞书](https://github.com/chenhg5/cc-connect/blob/v1.5.1-beta.3/docs/feishu.md)、[微信](https://github.com/chenhg5/cc-connect/blob/v1.5.1-beta.3/docs/weixin.md)、[企业微信](https://github.com/chenhg5/cc-connect/blob/v1.5.1-beta.3/docs/wecom.md) 和 [QQ](https://github.com/chenhg5/cc-connect/blob/v1.5.1-beta.3/docs/qq.md) 上游文档。
+
+配置好后，在宿主机 Compose 的 `.env` 中加入 `CC_CONNECT_ENABLED=1`，重新创建容器：
+
+```bash
+docker compose up -d --force-recreate dev-box
+docker compose logs -f dev-box
+```
+
+默认配置是 `/home/vscode/.cc-connect/config.toml`，可通过 `CC_CONNECT_CONFIG` 指向其他**容器内路径**。配置和会话数据默认持久化到宿主机 `./.vscode/.cc-connect`，模型凭据随现有 home 挂载保留。机器人凭证可以直接填写在权限为 `600` 的配置中，也可以写成 `${变量名}`，再取消 Compose 中 `env_file` 的注释，通过权限为 `600` 的 `./.vscode/.cc-connect/runtime.env` 注入；宿主机 `.env` 本身不会自动把所有变量传入容器。密钥不进入镜像或 SSH 环境白名单。
+
+自动启动的服务继承容器环境，使用代理时可配置 Compose 的 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`；Telegram 也支持配置中的 `proxy`。NapCat 与 dev-box 同网时使用 `ws://napcat:3001`，本机及容器服务应纳入 `NO_PROXY`。
+
+启动脚本汇聚 `[cc-connect]` 日志。启用后配置缺失、不可读或进程退出都会让容器报错退出，即便 `HEALTH_REPORT_INTERVAL=0` 也会检测。修正配置后用 `docker compose restart dev-box` 恢复；修改 Compose 环境变量则需重新创建容器。无需端口映射的长连接渠道可直接使用；按需配置公网 Webhook 或管理 API 时须单独配置网络与鉴权。
+
+容器内由启动脚本和 tini 管理前台进程，勿使用依赖 systemd 的 `cc-connect daemon install`。关闭时会通知服务并等待清理，Compose 给出 30 秒退出时间。程序固定安装在 `/usr/local/bin`，版本更新通过镜像重建完成，聊天 `/upgrade` 不用于更新镜像。
+
 ### 浏览器：接入 ChromiumManager
 
 镜像**不预装浏览器二进制**。浏览器由独立的 [ChromiumManager](https://github.com/sunyu2481/chromium-manager) 容器提供，dev-box 里的 agent（Claude Code、Codex）与脚本经其 CDP 网关连接远程实例。这样做的收益：镜像少约 1 GB，且拿到的是带指纹伪装、代理与持久化 Cookie 的有头浏览器，比本地 headless Chromium 更接近真实环境。
@@ -259,7 +319,7 @@ playwright install chromium
 
 ### 日志
 
-启动脚本和 SSH 服务的日志统一汇聚到主进程 stdout，因此 `docker logs` 一处即可看全。每行带时间戳与来源标签：
+启动脚本、SSH 服务和启用后的 cc-connect 日志统一汇聚到主进程 stdout，因此 `docker logs` 一处即可看全。每行带时间戳与来源标签：
 
 ```
 2026-07-27T11:36:02+0800 [init]    初始化完成，容器进入常驻状态
@@ -270,12 +330,14 @@ playwright install chromium
 | --- | --- |
 | `[init]` | 启动脚本自身：各服务启停、健康告警 |
 | `[sshd]` | OpenSSH 服务：连接、认证成功/失败、来源 IP 与公钥指纹 |
+| `[cc-connect]` | 聊天桥接：连接、配置加载、代理会话和关闭过程 |
 
 查看方式：
 
 ```bash
 docker compose logs -f                       # 全部
 docker compose logs -f | grep '\[sshd\]'      # 只看 SSH
+docker compose logs -f | grep '\[cc-connect\]' # 只看聊天桥接
 docker compose logs | grep -E 'Invalid user|Failed publickey'   # 只看认证失败
 ```
 

@@ -1,0 +1,87 @@
+# 复制到 /home/vscode/.cc-connect/config.toml，设置为仅本人可读写，并填写凭证。
+# 一个项目绑定一个代理和多个聊天渠道；不同代理建议使用不同机器人。
+language = "zh"
+data_dir = "/home/vscode/.cc-connect"
+
+[log]
+level = "info"
+
+[[projects]]
+name = "codex"
+# 需要 /shell、/dir 等管理命令时，填写对应渠道的本人用户标识。
+# admin_from = "填写本人用户标识"
+
+[projects.agent]
+type = "codex"
+
+[projects.agent.options]
+work_dir = "/workspace"
+# 使用标准输入输出连接，工具执行的确认可以回传到聊天渠道。
+backend = "app_server"
+app_server_url = "stdio://"
+mode = "suggest"
+
+[[projects.platforms]]
+type = "telegram"
+
+[projects.platforms.options]
+token = "填写Telegram机器人Token"
+# 使用用户标识，不能填写用户名；留空或星号会允许所有用户。
+allow_from = "填写允许的Telegram用户ID"
+# proxy = "http://代理地址:端口"
+
+# 同一项目可以再启用以下渠道；只用其他渠道时删除上面的 Telegram 配置。
+
+# [[projects.platforms]]
+# type = "feishu"
+# [projects.platforms.options]
+# app_id = "填写飞书应用ID"
+# app_secret = "填写飞书应用密钥"
+# allow_from = "填写本人飞书open_id"
+
+# 微信个人号通过 ilink 接入；扫码命令会写回实际凭证和用户标识。
+# [[projects.platforms]]
+# type = "weixin"
+# [projects.platforms.options]
+# token = "填写ilink凭证"
+# allow_from = "填写本人ilink用户ID"
+
+# 企业微信智能机器人长连接，无需公网回调。
+# [[projects.platforms]]
+# type = "wecom"
+# [projects.platforms.options]
+# mode = "websocket"
+# bot_id = "填写企业微信机器人ID"
+# bot_secret = "填写企业微信机器人密钥"
+# allow_from = "填写本人企业微信用户ID"
+
+# QQ 官方机器人需要开放平台应用；群消息通常需要提及机器人。
+# [[projects.platforms]]
+# type = "qqbot"
+# [projects.platforms.options]
+# app_id = "填写QQ机器人应用ID"
+# app_secret = "填写QQ机器人应用密钥"
+# allow_from = "填写本人QQ用户openid"
+
+# QQ 账号接入需另行部署 NapCat，并让两个容器处于同一网络。
+# [[projects.platforms]]
+# type = "qq"
+# [projects.platforms.options]
+# ws_url = "ws://napcat:3001"
+# token = "填写NapCat访问密钥"
+# allow_from = "填写本人QQ号"
+
+# 同时使用 Claude Code 时，取消下面的注释并填写独立机器人的凭证。
+# [[projects]]
+# name = "claude"
+# [projects.agent]
+# type = "claudecode"
+# [projects.agent.options]
+# work_dir = "/workspace"
+# mode = "default"
+# [[projects.platforms]]
+# type = "feishu"
+# [projects.platforms.options]
+# app_id = "填写另一个飞书应用ID"
+# app_secret = "填写另一个飞书应用密钥"
+# allow_from = "填写本人飞书open_id"
