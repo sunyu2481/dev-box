@@ -35,7 +35,7 @@ services:
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
-    # 所有子系统日志统一汇聚到容器 stdout（前缀 [init]/[sshd]/[gateway]），
+    # 启动与 SSH 日志统一汇聚到容器 stdout（前缀 [init]/[sshd]），
     # 被爆破时 [sshd] 行会快速增长，需限制日志占用磁盘的上限。
     logging:
       driver: json-file

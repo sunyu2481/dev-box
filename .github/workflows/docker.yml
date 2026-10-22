@@ -1,4 +1,4 @@
-name: Build and Push Multi-Arch Docker Image
+name: 构建并发布多架构开发镜像
 
 on:
   push:
@@ -6,15 +6,18 @@ on:
       - main
     tags:
       - 'v*'
+  schedule:
+    # 每周一北京时间 11:17 完整重建，刷新系统安全补丁与最新命令行工具。
+    - cron: '17 3 * * 1'
   workflow_dispatch:
     inputs:
       refresh_volatile_tools:
-        description: 'Reinstall latest global CLIs: Claude Code, Codex, Playwright, chrome-devtools-mcp'
+        description: '刷新 Claude Code、Codex、Playwright 和 chrome-devtools-mcp，复用工具链缓存'
         required: false
         default: false
         type: boolean
       no_cache:
-        description: 'Build the whole image without using Docker layer cache'
+        description: '完整重建镜像，刷新系统安全补丁和所有预装工具'
         required: false
         default: false
         type: boolean
@@ -32,23 +35,23 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout repository
+      - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
+      - name: 配置跨架构模拟
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
+      - name: 配置 Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: 登录 GitHub 镜像仓库
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      - name: 生成镜像标签与元数据
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -67,18 +70,19 @@ jobs:
             org.opencontainers.image.vendor=${{ github.repository_owner }}
             org.opencontainers.image.licenses=MIT
 
-      - name: Build and push multi-arch image
+      - name: 构建并发布多架构镜像
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
+          pull: true
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
-          no-cache: ${{ github.event_name == 'workflow_dispatch' && inputs.no_cache }}
+          no-cache: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.no_cache) }}
           build-args: |
             VOLATILE_TOOLS_CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && inputs.refresh_volatile_tools && github.run_id || '0' }}
           cache-from: type=gha

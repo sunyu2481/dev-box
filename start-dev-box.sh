@@ -6,7 +6,6 @@ set -u
 # 因此 `docker logs` 能看到全部日志。每行前缀 `<时间戳> [来源]` 以区分应用：
 #   [init]    本启动脚本自身
 #   [sshd]    OpenSSH 服务（含认证成功/失败，用于发现爆破）
-#   [gateway] Hermes gateway
 #
 # 时间戳用 bash 内建 printf '%(...)T'（bash 4.2+），避免每行 fork 一次 date。
 # 注意 tag_stream 中不能用 `while read | printf` 之外的重量级方案：sshd 在被
@@ -32,7 +31,7 @@ tag_stream() {
 }
 
 # 与 tag_stream 相同，但顺带累计"认证失败"次数到 $AUTHFAIL_COUNTER 文件，
-# 供健康汇报读取。计数只在 sshd 流上做，避免给 gateway 流增加无谓开销。
+# 供健康汇报读取。
 #
 # 模式经过去重：一次失败连接会产生多行日志（例如 "Invalid user X" 紧跟
 # "Connection closed by invalid user X"），若两者都计数会使统计翻倍。故只匹配
@@ -161,6 +160,8 @@ if [ -s "$AUTH_KEYS" ]; then
     # 是管道最后一个命令（tag_stream）的 PID，而 sshd 崩溃后只要仍有子进程持有
     # 写端，tag_stream 就不退出，`kill -0` 会把已死的服务误判为健康。进程替换让
     # `$!` 指向 sshd 自身（此处为 sudo，但 sudo 会随 sshd 一同退出，等效）。
+    # 日志由当前用户的子 shell 汇聚，重定向无需提权。
+    # shellcheck disable=SC2024
     sudo /usr/sbin/sshd -D -e -f /etc/ssh/sshd_config_devbox > >(tag_stream_sshd) 2>&1 &
     sshd_pid=$!
     sleep 1
@@ -174,35 +175,7 @@ else
   log "未配置 SSH 公钥（设置 SSH_PUBLIC_KEY、挂载 ~/.ssh/*.pub 或 ~/.ssh/authorized_keys），跳过 sshd 启动"
 fi
 
-# ---------------------------------------------------------------------------
-# Hermes gateway：后台启动，最多重试 3 次
-#
-# 注意：本脚本不是 PID 1，镜像 ENTRYPOINT 为 tini，孤儿进程由 tini 回收。
-# sshd 这里以 -D 前台运行（见上），但其 pre-auth 子进程仍可能被 reparent 到 PID 1，
-# 因此 PID 1 必须会调用 wait()。不要把本脚本设为 ENTRYPOINT 绕过 tini。
-# ---------------------------------------------------------------------------
-for attempt in 1 2 3; do
-  # stdbuf -oL：gateway 是 Python 进程，stdout 非 tty 时默认块缓冲，
-  # 会导致日志延迟数 KB 才出现在 docker logs 中；强制行缓冲以便实时可见。
-  # 进程替换而非管道，理由同上（$! 需指向服务自身以便健康检查）。
-  # -v 把 stderr 日志级别提到 INFO（默认仅 WARNING 以上，看不到连接/收发状态）。
-  # gateway 另有文件日志在 $HERMES_HOME/logs/ 下，内容与 stderr 大量重叠，
-  # 故不再 tail 进 stdout，避免 docker logs 里出现双份记录。
-  stdbuf -oL -eL hermes gateway run -v --accept-hooks > >(tag_stream gateway) 2>&1 &
-  gateway_pid=$!
-
-  sleep 5
-
-  if kill -0 "$gateway_pid" 2>/dev/null; then
-    log "hermes gateway 已启动（第 ${attempt} 次尝试）"
-    break
-  fi
-
-  wait "$gateway_pid" 2>/dev/null || true
-  log "hermes gateway 启动失败（第 ${attempt}/3 次尝试），见上方 [gateway] 输出"
-done
-
-log "初始化完成，容器进入常驻状态；应用日志以 [sshd] / [gateway] 前缀区分"
+log "初始化完成，容器进入常驻状态；SSH 日志以 [sshd] 前缀标记"
 
 # ---------------------------------------------------------------------------
 # 常驻 + 周期健康汇报
@@ -245,11 +218,6 @@ while :; do
   if [ -n "${sshd_pid:-}" ] && ! kill -0 "$sshd_pid" 2>/dev/null; then
     log "警告：sshd 进程已退出，SSH 将无法连入（可 docker compose restart 恢复）"
     sshd_pid=""
-  fi
-
-  if [ -n "${gateway_pid:-}" ] && ! kill -0 "$gateway_pid" 2>/dev/null; then
-    log "警告：hermes gateway 进程已退出"
-    gateway_pid=""
   fi
 
   # 认证失败增量即本轮爆破强度。逐条失败在 [sshd] 日志里已有原始记录，

@@ -5,10 +5,10 @@
 ## 功能特性
 
 - 基于 Ubuntu 24.04
-- Node.js（构建时自动取最新 LTS）/ pnpm
-- Python / uv
-- Go 1.26
-- Java 21 / Maven 3.9 / Gradle 9
+- Node.js（构建时自动取最新 LTS，回退版本 24.22.1）/ pnpm 11.28.6
+- Python / uv 0.13.5
+- Go 1.26.10
+- Java 21 / Maven 3.10.0 / Gradle 9.8.2
 - Git / Git LFS / GitHub CLI (`gh`)
 - 浏览器自动化客户端：Playwright 库与 `chrome-devtools-mcp`（**不含浏览器二进制**，浏览器由 ChromiumManager 容器经 CDP 提供，见下文）
 - 支持 CJK、emoji 和常见网页渲染场景的浏览器字体
@@ -17,7 +17,6 @@
 - AI CLI 工具：
   - Claude Code
   - OpenAI Codex CLI
-  - Hermes agent gateway（预装 Telegram adapter；镜像仅保留 gateway 运行时，不含桌面/TUI/Web UI 与浏览器工具链）
 
 > 镜像**不预装 Docker CLI / Buildx / Compose**。如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 `/var/run/docker.sock`。
 
@@ -29,12 +28,29 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 ## 发布与刷新预装工具
 
-GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。workflow 默认使用 Docker layer cache，因此未修改 `Dockerfile` 时，手动触发可能会快速命中缓存，不会重新安装 Claude Code、Codex、Playwright、chrome-devtools-mcp 这类默认安装 latest 的工具。
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI 和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
+
+每次构建都会拉取基础镜像；系统安装层会更新基础镜像中已有的软件包。普通推送和手动构建仍使用构建层缓存，因此仅拉取基础镜像不能保证所有安装层重新执行。pnpm、Go、Maven、Gradle 和 uv 的默认版本固定在 `Dockerfile` 的构建参数中，升级这些工具需要修改对应参数。
 
 手动运行 workflow 时：
 
 - 只想刷新 Codex 等未固定版本的全局 CLI，勾选 `refresh_volatile_tools`。
 - 需要完整绕过所有 Docker 构建缓存，勾选 `no_cache`。
+
+`refresh_volatile_tools` 参数在全局命令行工具安装层之前声明，刷新时可以复用前面的系统与工具链安装缓存。需要刷新系统安全补丁、Node.js 或 GitHub CLI 时，请使用 `no_cache`。
+
+本地完整重建：
+
+```bash
+docker build --pull --no-cache -t dev-box:local .
+```
+
+新镜像发布后，更新正在运行的容器：
+
+```bash
+docker compose pull
+docker compose up -d --force-recreate
+```
 
 ## 使用方式
 
@@ -51,7 +67,7 @@ GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workfl
 docker compose up -d
 ```
 
-容器启动时会在后台尝试启动 Hermes gateway；如果启动失败，会最多尝试 3 次，之后容器仍保持运行。Hermes gateway 已预装 `python-telegram-bot`，可加载 Telegram adapter。
+容器通过 `tini` 执行 `start-dev-box`，检测到授权公钥后启动 SSH 服务，再进入健康汇报循环常驻。
 
 进入容器：
 
@@ -243,19 +259,17 @@ playwright install chromium
 
 ### 日志
 
-容器内所有子系统的日志统一汇聚到主进程 stdout，因此 `docker logs` 一处即可看全。每行带时间戳与来源标签：
+启动脚本和 SSH 服务的日志统一汇聚到主进程 stdout，因此 `docker logs` 一处即可看全。每行带时间戳与来源标签：
 
 ```
 2026-07-27T11:36:02+0800 [init]    初始化完成，容器进入常驻状态
 2026-07-27T11:36:02+0800 [sshd]    Invalid user baduser from 203.0.113.9 port 56542
-2026-07-27T11:36:05+0800 [gateway] ...
 ```
 
 | 标签 | 来源 |
 | --- | --- |
 | `[init]` | 启动脚本自身：各服务启停、健康告警 |
 | `[sshd]` | OpenSSH 服务：连接、认证成功/失败、来源 IP 与公钥指纹 |
-| `[gateway]` | Hermes gateway |
 
 查看方式：
 

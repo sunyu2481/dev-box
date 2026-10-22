@@ -15,11 +15,12 @@
 - 使用显式工具链版本构建镜像（版本号需与 Dockerfile 的 `ARG` 默认值对齐；注意 `NODE_VERSION` 仅在取不到 nodejs.org index 时作为 fallback 生效，见架构说明）：
   ```bash
   docker build \
-    --build-arg NODE_VERSION=24.19.0 \
-    --build-arg PNPM_VERSION=11.20.0 \
-    --build-arg GO_VERSION=1.26.3 \
-    --build-arg MAVEN_VERSION=3.9.16 \
-    --build-arg GRADLE_VERSION=9.5.1 \
+    --build-arg NODE_VERSION=24.22.1 \
+    --build-arg PNPM_VERSION=11.28.6 \
+    --build-arg GO_VERSION=1.26.10 \
+    --build-arg MAVEN_VERSION=3.10.0 \
+    --build-arg GRADLE_VERSION=9.8.2 \
+    --build-arg UV_VERSION=0.13.5 \
     -t dev-box:local .
   ```
 - 在已构建镜像中启动交互式 shell：
@@ -57,26 +58,24 @@
 ## 架构说明
 
 - `Dockerfile` 基于 `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`，并使用 `TARGETPLATFORM`、`TARGETOS` 和 `TARGETARCH` 支持多架构构建。
-- 工具版本由 Docker build args 控制：`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION` 和 `GRADLE_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。`NODE_VERSION` 语义特殊：Node.js 构建时**自动从 `nodejs.org/dist/index.json` 取最新 LTS 版本**安装，`NODE_VERSION` 仅作为无法访问该 index 时的 fallback，建议保持为当前已知最新 LTS（回退命中历史坏区间版本会导致构建失败，见下文）。
-- 系统包会安装常用开发工具、Python、Java 21、Git LFS、浏览器字体以及网络/调试工具。
+- 工具版本由 Docker build args 控制：`PNPM_VERSION`、`GO_VERSION`、`MAVEN_VERSION`、`GRADLE_VERSION` 和 `UV_VERSION`。更新版本时优先修改这些默认值，不要在其他位置硬编码版本。`NODE_VERSION` 语义特殊：Node.js 构建时**自动从 `nodejs.org/dist/index.json` 取最新 LTS 版本**安装，`NODE_VERSION` 仅作为无法访问该 index 时的 fallback，建议保持为当前已知最新安全 LTS。
+- 系统安装层先运行 `apt-get update` 和 `apt-get upgrade -y`，更新基础镜像中已有软件包的安全修订，再安装常用开发工具、Python、Java 21、Git LFS、浏览器字体以及网络/调试工具。
 - GitHub CLI（`gh`）通过 GitHub CLI 官方 apt 源安装。
-- OpenSSH 服务（`openssh-server`）随镜像安装，配置文件为 `/etc/ssh/sshd_config_devbox`（独立配置，仅公钥认证、禁用密码与 root 登录、`UsePAM yes`）。`UsePAM yes` 是必需的：vscode 账户密码字段被锁定（`!`），若 `UsePAM no` 则 sshd 会因"账户锁定"拒绝包括公钥在内的所有认证。镜像构建时删除 apt 固化生成的 `/etc/ssh/ssh_host_*`；host key 在容器首次启动时由 `start-with-gateway` 生成并持久化到 `/home/vscode/.ssh/host_keys`。公钥可通过环境变量 `SSH_PUBLIC_KEY`、挂载到 `~/.ssh` 下的任意 `*.pub` 文件、或直接放置 `~/.ssh/authorized_keys` 三种方式提供，启动脚本会去重合并到 vscode 用户的 `authorized_keys`；无授权公钥时不启动 sshd。sshd 由 vscode 用户经 `sudo` 以 root 启动。
+- OpenSSH 服务（`openssh-server`）随镜像安装，配置文件为 `/etc/ssh/sshd_config_devbox`（独立配置，仅公钥认证、禁用密码与 root 登录、`UsePAM yes`）。`UsePAM yes` 是必需的：vscode 账户密码字段被锁定（`!`），若 `UsePAM no` 则 sshd 会因"账户锁定"拒绝包括公钥在内的所有认证。镜像构建时删除 apt 固化生成的 `/etc/ssh/ssh_host_*`；host key 在容器首次启动时由 `start-dev-box` 生成并持久化到 `/home/vscode/.ssh/host_keys`。公钥可通过环境变量 `SSH_PUBLIC_KEY`、挂载到 `~/.ssh` 下的任意 `*.pub` 文件、或直接放置 `~/.ssh/authorized_keys` 三种方式提供，启动脚本会去重合并到 vscode 用户的 `authorized_keys`；无授权公钥时不启动 sshd。sshd 由 vscode 用户经 `sudo` 以 root 启动。
 - `sshd_config_devbox` 含抗爆破限流，**按单人使用调优**：`AllowUsers vscode`、`LoginGraceTime 15`、`MaxAuthTries 3`、`MaxStartups 4:100:10`、`PerSourceMaxStartups 4`、`PerSourceNetBlockSize 32:128`、`MaxSessions 4`。这些参数限制未认证（pre-auth）sshd 子进程的并发数与存活时长——端口暴露公网时扫描器会持续发起连接，每条连接对应一个子进程。两处下限不要再收紧：`MaxAuthTries` 降到 2 会在客户端本地私钥较多时误伤（ssh-agent 逐个试密钥，正确的可能排在第 3 位之后）；`PerSourceMaxStartups` 低于 4 会误伤 VS Code Remote-SSH 等并发建连的工具。若改为多人共享出口 IP（NAT）使用，需放宽 `PerSourceMaxStartups` 与 `MaxStartups`。当前基础镜像的 OpenSSH 为 9.6p1，尚不支持 9.8+ 的 `PerSourcePenalties`；升级基础镜像后可考虑增补。
 - **PID 1 必须能回收孤儿进程**：镜像 `ENTRYPOINT` 为 `/usr/bin/tini -s -g --`（`tini` 由 apt 安装）。sshd 的 pre-auth 子进程遭遇扫描时会被 reparent 到 PID 1，若 PID 1 不调用 `wait()`（如历史实现里作为 PID 1 的 `sleep infinity`），这些进程退出后会永久堆积为僵尸（`Z` 状态）直至耗尽 PID。`-s` 启用 `PR_SET_CHILD_SUBREAPER`，使 tini 即便被 `docker run --init` / compose `init: true` 包装成非 PID 1 也仍能收养孤儿；`-g` 让信号投递到整个进程组。不要移除该 `ENTRYPOINT`，也不要在运行时用 `--entrypoint` 直接覆盖为启动脚本本身。
-- **统一日志汇聚**：`start-with-gateway` 把各子系统输出汇聚到自身 stdout，每行加 `<ISO8601 时间戳> [来源]` 前缀（`[init]` / `[sshd]` / `[gateway]`），因此 `docker logs` 一处看全并可按标签过滤。关键实现约束：
+- **统一日志汇聚**：`start-dev-box` 把启动与 SSH 输出汇聚到自身 stdout，每行加 `<ISO8601 时间戳> [来源]` 前缀（`[init]` / `[sshd]`），因此 `docker logs` 一处看全并可按标签过滤。关键实现约束：
   - sshd 必须以 `-D -e` 启动。缺 `-D` 会自我 daemonize 并把 stdio 重定向到 `/dev/null`；缺 `-e` 则日志写向 syslog，而容器内无 syslog 守护进程接收。任缺其一，SSH 日志完全消失（这是此前爆破无从发现的直接原因）。
   - 配合 `sshd_config_devbox` 的 `LogLevel VERBOSE`：`INFO` 不记录公钥指纹，`VERBOSE` 才输出 `Failed publickey ... SHA256:xxx`。
   - 服务用进程替换 `> >(tag_stream ...)` 而非管道 `| tag_stream`。管道下 `$!` 指向 `tag_stream` 而非服务本身，服务崩溃后只要仍有子进程持有写端，`kill -0` 就会把已死服务误判为健康。同理 `sshd -t` 自检不能接管道，否则退出码被 `tag_stream` 的 0 掩盖。
-  - gateway 用 `stdbuf -oL -eL` 强制行缓冲（Python 进程 stdout 非 tty 时默认块缓冲，日志会延迟数 KB 才出现），并加 `-v` 把级别提到 INFO。gateway 自有文件日志在 `$HERMES_HOME/logs/`，内容与 stderr 重叠，故不 tail 进 stdout 以免双份记录。
-- **容器 ENV 到不了 SSH 会话，须经 `/etc/environment` 中转**：容器 ENV 只被 PID 1 的后代继承，而 SSH 登入的会话不在这条链上——sshd 由启动脚本经 `sudo` 拉起，sudoers 的 `Defaults env_reset` 会清掉自定义变量。因此 compose 注入的 `CHROMIUM_MANAGER_URL` 等值在 SSH 会话（含其中运行的 VS Code Server 与各类 agent）里为空，典型症状是 `curl "$CHROMIUM_MANAGER_URL/agent/acquire"` 打到空地址、HTTP 000。`start-with-gateway` 的 `export_env_for_ssh` 把白名单变量写入 `/etc/environment`，靠 `UsePAM yes` + `/etc/pam.d/sshd` 中的 `pam_env.so` 注入会话来打通。改动约束：只导出白名单变量（不要写入 `SSH_PUBLIC_KEY` 这类敏感值，该文件全用户可读）；写入块用 `# >>> dev-box runtime env >>>` 标记包裹并在每次启动时先删后写，保证容器重启不堆积；含换行或双引号的值直接跳过，`pam_env` 只认简单的 `KEY=VALUE`，格式错误会导致整个文件解析异常。当前白名单为 `CHROMIUM_MANAGER_URL`、`CHROMIUM_MANAGER_TOKEN`、`PLAYWRIGHT_BROWSERS_PATH` 与代理变量 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`；注意代理 URL 常含凭据，写入前先确认该凭据可否对容器内所有用户可见。
-- 脚本末尾不再是 `exec sleep infinity`，而是周期健康汇报循环（间隔由 `HEALTH_REPORT_INTERVAL` 控制，秒；`0` 关闭）。仅在异常时输出：sshd/gateway 进程消失、僵尸进程数变化、SSH 认证失败增量。认证失败计数由 `tag_stream_sshd` 累计到 `$TMPDIR/.devbox-sshd-authfail`（用文件而非变量，因为该函数运行在进程替换的子 shell 中，变量无法回传）；计数模式已去重，只匹配 `Invalid user` / `not allowed because` / `Failed publickey`，避免同一次失败连接的多行日志重复计数。此处不能用 `exec`：虽然进程替换的 FD 会被继承（日志不断流），但 shell 被替换掉后就没有进程做汇报了。
+- **容器 ENV 到不了 SSH 会话，须经 `/etc/environment` 中转**：容器 ENV 只被 PID 1 的后代继承，而 SSH 登入的会话不在这条链上——sshd 由启动脚本经 `sudo` 拉起，sudoers 的 `Defaults env_reset` 会清掉自定义变量。因此 compose 注入的 `CHROMIUM_MANAGER_URL` 等值在 SSH 会话（含其中运行的 VS Code Server 与各类 agent）里为空，典型症状是 `curl "$CHROMIUM_MANAGER_URL/agent/acquire"` 打到空地址、HTTP 000。`start-dev-box` 的 `export_env_for_ssh` 把白名单变量写入 `/etc/environment`，靠 `UsePAM yes` + `/etc/pam.d/sshd` 中的 `pam_env.so` 注入会话来打通。改动约束：只导出白名单变量（不要写入 `SSH_PUBLIC_KEY` 这类敏感值，该文件全用户可读）；写入块用 `# >>> dev-box runtime env >>>` 标记包裹并在每次启动时先删后写，保证容器重启不堆积；含换行或双引号的值直接跳过，`pam_env` 只认简单的 `KEY=VALUE`，格式错误会导致整个文件解析异常。当前白名单为 `CHROMIUM_MANAGER_URL`、`CHROMIUM_MANAGER_TOKEN`、`PLAYWRIGHT_BROWSERS_PATH` 与代理变量 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`；注意代理 URL 常含凭据，写入前先确认该凭据可否对容器内所有用户可见。
+- 脚本末尾不再是 `exec sleep infinity`，而是周期健康汇报循环（间隔由 `HEALTH_REPORT_INTERVAL` 控制，秒；`0` 关闭）。仅在异常时输出：sshd 进程消失、僵尸进程数变化、SSH 认证失败增量。认证失败计数由 `tag_stream_sshd` 累计到 `$TMPDIR/.devbox-sshd-authfail`（用文件而非变量，因为该函数运行在进程替换的子 shell 中，变量无法回传）；计数模式已去重，只匹配 `Invalid user` / `not allowed because` / `Failed publickey`，避免同一次失败连接的多行日志重复计数。此处不能用 `exec`：虽然进程替换的 FD 会被继承（日志不断流），但 shell 被替换掉后就没有进程做汇报了。
 - 镜像不预装 Docker CLI / Buildx / Compose；如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 socket。
-- 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，把 `./workspace` 挂到 `/workspace`、`./.vscode` 绑定挂载持久化 `/home/vscode`。默认 `CMD` 为 `/usr/local/bin/start-with-gateway`（依次启动 sshd 与 Hermes gateway，最后进入健康汇报循环常驻），由上述 tini `ENTRYPOINT` 拉起，不要在 Compose 中覆盖二者。Compose 的 SSH 端口映射为 `${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22`——**默认只绑宿主机 loopback，不暴露公网**，推荐经宿主机 SSH 跳转（`ssh -J` / `ProxyJump`）连入容器，这样公网只需开放宿主机自身的 22 端口。要直接暴露需显式设 `DEVBOX_SSH_BIND=0.0.0.0`。改动此默认绑定地址等于扩大公网暴露面，需先确认。Compose 透传的环境变量：`SSH_PUBLIC_KEY`、`HEALTH_REPORT_INTERVAL`、`CHROMIUM_MANAGER_URL`、`CHROMIUM_MANAGER_TOKEN`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`；与 ChromiumManager 的组网以注释形式给出而非默认启用（`external` 网络不存在时 `compose up` 会直接失败）。
+- 默认 `docker-compose.yml` 使用已发布镜像 `ghcr.io/sunyu2481/dev-box:latest`，把 `./workspace` 挂到 `/workspace`、`./.vscode` 绑定挂载持久化 `/home/vscode`。默认 `CMD` 为 `/usr/local/bin/start-dev-box`（启动 sshd，随后进入健康汇报循环常驻），由上述 tini `ENTRYPOINT` 拉起，不要在 Compose 中覆盖二者。Compose 的 SSH 端口映射为 `${DEVBOX_SSH_BIND:-127.0.0.1}:${DEVBOX_SSH_PORT:-2222}:22`——**默认只绑宿主机 loopback，不暴露公网**，推荐经宿主机 SSH 跳转（`ssh -J` / `ProxyJump`）连入容器，这样公网只需开放宿主机自身的 22 端口。要直接暴露需显式设 `DEVBOX_SSH_BIND=0.0.0.0`。改动此默认绑定地址等于扩大公网暴露面，需先确认。Compose 透传的环境变量：`SSH_PUBLIC_KEY`、`HEALTH_REPORT_INTERVAL`、`CHROMIUM_MANAGER_URL`、`CHROMIUM_MANAGER_TOKEN`、`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY`；与 ChromiumManager 的组网以注释形式给出而非默认启用（`external` 网络不存在时 `compose up` 会直接失败）。
 - Maven 和 Gradle 从官方二进制发行包安装到 `/opt/maven` 和 `/opt/gradle`。
-- Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。Node.js 安装层会先查 `nodejs.org/dist/index.json` 取最新 LTS 版本号，查不到则回退到 `NODE_VERSION` 构建参数（见架构说明第一条）。历史上 Hermes `install.sh` 会因 Node 自带 npm 落入 11.10–11.16 坏区间（无法 honor 某些 `.npmrc` 选项）而改自装 Node 并用 `ln -sf` 覆盖 `/usr/local/bin/{node,npm,npx}`，随后镜像清理删除 `${HERMES_HOME}/node` 导致这些符号链接变成死链、后续 `npm install -g` 报 `npm: command not found`。自动取最新 LTS 且 fallback 亦避开坏区间即可规避此问题。
-- `uv` 通过 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
+- Node.js 和 Go 从上游发布归档安装，并通过 `TARGETARCH` 做架构映射。如果增加架构支持，需要同步更新这些 `case` 映射。Node.js 安装层会先查 `nodejs.org/dist/index.json` 取最新 LTS 版本号，查不到则回退到 `NODE_VERSION` 构建参数（见架构说明第一条）。
+- `uv` 通过 `${UV_VERSION}` 对应的 Astral 安装脚本安装，并与 `uvx` 一起复制到 `/usr/local/bin`。
 - 全局 AI CLI 中，Claude Code 和 OpenAI Codex CLI 通过 npm 包参数安装。
-- Hermes 通过官方 `install.sh`（`--skip-setup --skip-browser --non-interactive`）安装到 `/usr/local/lib/hermes-agent`，并额外 `uv pip install python-telegram-bot`。安装后删除 gateway 非必需内容（`node_modules`、`apps`/`website`/`web`/`ui-tui`/`tests`/`.git` 等），仅保留 Python venv 与 editable 源码树供 `hermes gateway` 使用。
 - **镜像不预装浏览器二进制**，浏览器由独立的 ChromiumManager 容器提供，agent 与脚本经其 CDP 网关（默认 `10102`，同 Docker 网络内可达，不 publish 到宿主机）连接远程实例。镜像内只保留客户端：`playwright` npm 包（供 `chromium.connectOverCDP()`）与 `chrome-devtools-mcp`（Claude Code / Codex 的浏览器 MCP，用 `--wsEndpoint` 指向 ws 地址）。相关约束：
   - **`chrome-devtools-mcp` 必须用 `--wsEndpoint`，不能用 `--browser-url`。** 其内部（`build/src/third_party/index.js`）以 `new URL('/json/version', browserURL)` 推导端点，绝对路径参数会替换掉 base 的整个 path，`/cdp/<id>` 前缀被丢弃 → 请求落到网关根路径 404。属 puppeteer 固有行为，对任何带路径前缀的 CDP 网关都成立，改注册写法无法绕过。ws 地址从 `curl "$CDP/json/version" | jq -r .webSocketDebuggerUrl` 取得（网关已重写为带前缀形式）。Playwright 的 `connectOverCDP()` 不受此影响，可直接用 cdpUrl。
   - ws 地址含浏览器会话 ID，浏览器重启后失效需重新注册；profile ID 则在重启后保持稳定。
@@ -87,8 +86,9 @@
   - 两类场景 CDP 替代不了，属已知取舍：`playwright test`（走 Playwright server 协议而非 CDP，`connectOptions` 接不进来）与 `playwright screenshot`/`codegen` 等只能启动本地浏览器的 CLI 子命令。这两类需先 `playwright install chromium` 现装。
   - 远程浏览器的 `localhost` 是 ChromiumManager 容器自身。让它访问 dev-box 里的开发服务器时，服务须监听 `0.0.0.0`，URL 用 `http://dev-box:<port>`。
 - 最终镜像以 `vscode` 用户运行，`WORKDIR` 为 `/workspace`；`/home/vscode` 下的缓存和工具目录（含供现装浏览器用的 `.cache/ms-playwright`）会预先创建并归属给 `vscode`。镜像已不再创建顶层 `/ms-playwright`。
-- `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` tag 以及手动触发 `workflow_dispatch` 时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。
-- Docker metadata tag 包括默认分支的 `latest`、分支引用、tag 引用和 `sha-*` tag。
+- `.github/workflows/docker.yml` 使用 QEMU 和 Docker Buildx，在推送到 `main`、推送 `v*` 标签、手动触发 `workflow_dispatch` 以及每周定时构建时，将 `linux/amd64` 和 `linux/arm64` 镜像发布到 GHCR。
+- Docker metadata tag 包括默认分支的 `latest`、分支引用、tag 引用和 `sha-*` tag；定时任务在默认分支运行并沿用这些标签，不额外生成 nightly 标签。每次构建设置 `pull: true`；每周一北京时间 11:17 的定时任务绕过全部缓存，刷新系统安全补丁、Node.js LTS、GitHub CLI 和全局命令行工具。
+- `VOLATILE_TOOLS_CACHE_BUST` 及四个 npm 包参数在全局命令行工具安装层之前声明。手动勾选 `refresh_volatile_tools` 只使该层及后续层失去缓存；系统与工具链缓存可以复用。完整安全刷新应勾选 `no_cache` 或运行 `docker build --pull --no-cache -t dev-box:local .`。
 
 ## 变更指引
 

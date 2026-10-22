@@ -6,19 +6,13 @@ ARG TARGETPLATFORM
 ARG TARGETOS
 ARG TARGETARCH
 
-# NODE_VERSION: 自动安装最新 LTS 版本时的 fallback（仅当无法访问 nodejs.org/dist/index.json
-# 时回退到此版本）。设为当前已知最新的 LTS，避免回退命中历史坏区间版本导致构建失败。
-ARG NODE_VERSION=24.19.0
-ARG PNPM_VERSION=11.20.0
-ARG GO_VERSION=1.26.3
-ARG MAVEN_VERSION=3.9.16
-ARG GRADLE_VERSION=9.5.1
-
-ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
-ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
-ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
-ARG CHROME_DEVTOOLS_MCP_NPM_PACKAGE="chrome-devtools-mcp"
-ARG VOLATILE_TOOLS_CACHE_BUST=0
+# NODE_VERSION：仅在无法查询最新 LTS 时回退到此版本，保持为已知的最新安全版本。
+ARG NODE_VERSION=24.22.1
+ARG PNPM_VERSION=11.28.6
+ARG GO_VERSION=1.26.10
+ARG MAVEN_VERSION=3.10.0
+ARG GRADLE_VERSION=9.8.2
+ARG UV_VERSION=0.13.5
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
@@ -26,14 +20,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     PNPM_HOME=/home/vscode/.local/share/pnpm \
     GOPATH=/home/vscode/go \
-    HERMES_HOME=/home/vscode/.hermes \
     PLAYWRIGHT_BROWSERS_PATH=/home/vscode/.cache/ms-playwright \
     PATH=/home/vscode/.local/share/pnpm:/opt/maven/bin:/opt/gradle/bin:/usr/local/go/bin:/usr/local/bin:/home/vscode/go/bin:$PATH
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Base packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 安装系统工具，并更新基础镜像中已有软件包的安全修订。
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
     bash-completion \
     build-essential \
     ca-certificates \
@@ -87,7 +82,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Maven and Gradle from official distributions
+# 从官方发行包安装 Maven 和 Gradle。
 RUN mkdir -p /opt \
     && curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz \
     && tar -xzf /tmp/maven.tgz -C /opt \
@@ -100,17 +95,19 @@ RUN mkdir -p /opt \
     && mvn --version \
     && gradle --version
 
-# Install Node.js from official binaries for better multi-arch stability
+# 从官方发行包安装 Node.js，按目标架构选择二进制。
 RUN case "${TARGETARCH}" in \
         amd64) NODE_ARCH='x64' ;; \
         arm64) NODE_ARCH='arm64' ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
+        *) echo "不支持的目标架构：${TARGETARCH}" && exit 1 ;; \
     esac \
-    && curl -fsSL https://nodejs.org/dist/index.json -o /tmp/node-index.json 2>/dev/null || true \
-    && NODE_LATEST=$(jq -r '[.[]|select(.lts!=false)|.version[1:]]|map(split(".")|map(tonumber))|sort_by(.[0],.[1],.[2])|last|"v"+(.[0]|tostring)+"."+(.[1]|tostring)+"."+(.[2]|tostring)' /tmp/node-index.json 2>/dev/null) || true \
+    && NODE_LATEST='' \
+    && if curl -fsSL --max-time 30 https://nodejs.org/dist/index.json -o /tmp/node-index.json 2>/dev/null; then \
+        NODE_LATEST=$(jq -er '[.[] | select(.lts != false and .lts != null)] | max_by(.version[1:] | split(".") | map(tonumber)) | .version' /tmp/node-index.json 2>/dev/null) || NODE_LATEST=''; \
+    fi \
     && rm -f /tmp/node-index.json \
     && NODE_RESOLVED=${NODE_LATEST:-v${NODE_VERSION}} \
-    && if [ -n "$NODE_LATEST" ]; then echo "Resolved Node: ${NODE_RESOLVED} (auto latest LTS)"; else echo "Resolved Node: ${NODE_RESOLVED} (fallback to built-in: v${NODE_VERSION})"; fi \
+    && if [ -n "$NODE_LATEST" ]; then echo "安装 Node.js ${NODE_RESOLVED}（最新 LTS）"; else echo "安装 Node.js ${NODE_RESOLVED}（使用回退版本）"; fi \
     && curl -fsSL "https://nodejs.org/dist/${NODE_RESOLVED}/node-${NODE_RESOLVED}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.tar.xz \
     && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
     && rm -f /tmp/node.tar.xz \
@@ -121,17 +118,17 @@ RUN case "${TARGETARCH}" in \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
     && pnpm --version
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+# 安装指定版本的 uv 和 uvx。
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && install -Dm755 /root/.local/bin/uv /usr/local/bin/uv \
     && install -Dm755 /root/.local/bin/uvx /usr/local/bin/uvx \
     && uv --version
 
-# Install Go
+# 按目标架构安装 Go。
 RUN case "${TARGETARCH}" in \
         amd64) GOARCH='amd64' ;; \
         arm64) GOARCH='arm64' ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" && exit 1 ;; \
+        *) echo "不支持的目标架构：${TARGETARCH}" && exit 1 ;; \
     esac \
     && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" -o /tmp/go.tgz \
     && rm -rf /usr/local/go \
@@ -139,74 +136,23 @@ RUN case "${TARGETARCH}" in \
     && rm -f /tmp/go.tgz \
     && go version
 
-# Install Hermes agent（仅保留 gateway 运行时：Python venv + 源码；去掉桌面/TUI/Web/测试与 node 依赖）
-RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh" -o /tmp/hermes-install.sh \
-    && bash /tmp/hermes-install.sh --skip-setup --skip-browser --non-interactive \
-    && uv pip install --python /usr/local/lib/hermes-agent/venv/bin/python python-telegram-bot \
-    && /usr/local/lib/hermes-agent/venv/bin/python -c "import telegram" \
-    && hermes --help >/dev/null \
-    && hermes gateway --help >/dev/null \
-    && rm -rf \
-        /usr/local/lib/hermes-agent/node_modules \
-        /usr/local/lib/hermes-agent/apps \
-        /usr/local/lib/hermes-agent/website \
-        /usr/local/lib/hermes-agent/tests \
-        /usr/local/lib/hermes-agent/web \
-        /usr/local/lib/hermes-agent/ui-tui \
-        /usr/local/lib/hermes-agent/tui_gateway \
-        /usr/local/lib/hermes-agent/docs \
-        /usr/local/lib/hermes-agent/.github \
-        /usr/local/lib/hermes-agent/.git \
-        /usr/local/lib/hermes-agent/.plans \
-        /usr/local/lib/hermes-agent/nix \
-        /usr/local/lib/hermes-agent/docker \
-        /usr/local/lib/hermes-agent/assets \
-        /usr/local/lib/hermes-agent/datagen-config-examples \
-        /usr/local/lib/hermes-agent/package.json \
-        /usr/local/lib/hermes-agent/package-lock.json \
-        /usr/local/lib/hermes-agent/Dockerfile \
-        /usr/local/lib/hermes-agent/docker-compose.yml \
-        /usr/local/lib/hermes-agent/docker-compose.windows.yml \
-        /usr/local/lib/hermes-agent/flake.nix \
-        /usr/local/lib/hermes-agent/flake.lock \
-        /usr/local/lib/hermes-agent/.hadolint.yaml \
-        /usr/local/lib/hermes-agent/.dockerignore \
-        /usr/local/lib/hermes-agent/.gitattributes \
-        /usr/local/lib/hermes-agent/.gitignore \
-        /usr/local/lib/hermes-agent/.mailmap \
-        /usr/local/lib/hermes-agent/.envrc \
-        /usr/local/lib/hermes-agent/README.md \
-        /usr/local/lib/hermes-agent/README.es.md \
-        /usr/local/lib/hermes-agent/README.ur-pk.md \
-        /usr/local/lib/hermes-agent/README.zh-CN.md \
-        /usr/local/lib/hermes-agent/CONTRIBUTING.md \
-        /usr/local/lib/hermes-agent/CONTRIBUTING.es.md \
-        /usr/local/lib/hermes-agent/SECURITY.md \
-        /usr/local/lib/hermes-agent/SECURITY.es.md \
-        /usr/local/lib/hermes-agent/AGENTS.md \
-        /usr/local/lib/hermes-agent/hermes-already-has-routines.md \
-    && rm -rf \
-        "${HERMES_HOME}/node" \
-        /root/.hermes/node \
-        /root/.npm \
-        /tmp/npm-* \
-        /tmp/hermes-install.sh \
-    && hermes --help >/dev/null \
-    && hermes gateway --help >/dev/null \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /root/.cache/uv /root/.cache/pip /root/.npm
-
-# Install global CLIs and browser automation runtime
+# 安装全局命令行工具和浏览器自动化客户端。
 #
 # 镜像刻意不预装浏览器二进制：浏览器由 ChromiumManager 容器提供，agent 经其
 # CDP 网关（默认 10102）连接已配置好指纹与代理的实例，因此本地只需要客户端库。
 #   - playwright：仅保留 npm 包（几 MB），供 chromium.connectOverCDP() 连远程浏览器。
-#   - chrome-devtools-mcp：Claude Code / Codex 的浏览器 MCP，走 --browser-url 连 CDP。
+#   - chrome-devtools-mcp：Claude Code / Codex 的浏览器 MCP，走 --wsEndpoint 连 CDP。
 #     其依赖全部 bundled，安装不会触发浏览器下载。
 # 仍执行 install-deps 装齐 Chromium 的运行期系统库（libgtk-3/libnss3 等，合计数十 MB）：
 # 这些库对 CDP 远程连接虽非必需，但让"需要本地浏览器时现装"退化为一条免 sudo 的
 # `playwright install chromium`（否则 install-deps 要 root 且需联网 apt）。
-RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
+# 这些参数只在本层声明，刷新客户端时复用前面的系统和工具链安装缓存。
+ARG CLAUDE_CODE_NPM_PACKAGE="@anthropic-ai/claude-code"
+ARG CODEX_CLI_NPM_PACKAGE="@openai/codex"
+ARG PLAYWRIGHT_NPM_PACKAGE="playwright"
+ARG CHROME_DEVTOOLS_MCP_NPM_PACKAGE="chrome-devtools-mcp"
+ARG VOLATILE_TOOLS_CACHE_BUST=0
+RUN echo "命令行工具刷新编号：${VOLATILE_TOOLS_CACHE_BUST}" \
     && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g \
     "${CLAUDE_CODE_NPM_PACKAGE}" \
     "${CODEX_CLI_NPM_PACKAGE}" \
@@ -219,7 +165,7 @@ RUN echo "VOLATILE_TOOLS_CACHE_BUST=${VOLATILE_TOOLS_CACHE_BUST}" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Prepare vscode user environment
+# 准备 vscode 用户的工具和缓存目录。
 # ms-playwright 目录预建并归属 vscode：镜像不带浏览器二进制，但需要本地浏览器时
 # （如 `playwright test`、`playwright screenshot` 这类只能启动本地浏览器的场景）
 # 可免 sudo 直接 `playwright install chromium` 装到这里。该路径位于 /home/vscode 下，
@@ -229,7 +175,6 @@ RUN mkdir -p \
     /home/vscode/.cache/pip \
     /home/vscode/.cache/uv \
     /home/vscode/.cache/ms-playwright \
-    /home/vscode/.hermes \
     /home/vscode/.m2 \
     /home/vscode/.gradle \
     /home/vscode/go/pkg \
@@ -238,17 +183,19 @@ RUN mkdir -p \
     && chown -R vscode:vscode /home/vscode /workspace
 
 COPY sshd_config_devbox /etc/ssh/sshd_config_devbox
-COPY --chmod=0755 start-with-gateway.sh /usr/local/bin/start-with-gateway
+COPY --chmod=0755 start-dev-box.sh /usr/local/bin/start-dev-box
 
 USER vscode
 WORKDIR /workspace
 
-# Re-enable corepack for vscode user
+# 验证 vscode 用户的工具链，并激活默认 pnpm 版本。
 RUN corepack enable \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
     && pnpm --version \
+    && claude --version \
+    && codex --version \
     && playwright --version \
-    && command -v chrome-devtools-mcp \
+    && chrome-devtools-mcp --version \
     && python --version \
     && java -version \
     && mvn --version \
@@ -264,4 +211,4 @@ RUN corepack enable \
 # -s：即使 tini 不是 PID 1（例如调用方又叠了 docker-init）也注册为 child subreaper，
 # 保证孤儿仍被收养回收；-g：信号转发给整个进程组，便于 docker stop 干净退出。
 ENTRYPOINT ["/usr/bin/tini", "-s", "-g", "--"]
-CMD ["/usr/local/bin/start-with-gateway"]
+CMD ["/usr/local/bin/start-dev-box"]
