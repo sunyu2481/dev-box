@@ -82,9 +82,22 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# 从 Docker 官方源安装客户端，连接宿主机的 Docker 服务；镜像构建交给 GitHub Workflow。
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && docker --version \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 # 从官方发行包安装 Maven 和 Gradle。
+# Maven 旧版本可能从下载镜像移除，此时使用同版本的官方归档。
 RUN mkdir -p /opt \
-    && curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz \
+    && { curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz \
+      || curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" -o /tmp/maven.tgz; } \
     && tar -xzf /tmp/maven.tgz -C /opt \
     && ln -s "apache-maven-${MAVEN_VERSION}" /opt/maven \
     && rm -f /tmp/maven.tgz \
@@ -221,6 +234,7 @@ WORKDIR /workspace
 
 # 验证 vscode 用户的工具链，并激活默认 pnpm 版本。
 RUN corepack enable \
+    && command -v setpriv >/dev/null \
     && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
     && pnpm --version \
     && claude --version \
@@ -235,7 +249,8 @@ RUN corepack enable \
     && gradle --version \
     && go version \
     && uv --version \
-    && gh --version
+    && gh --version \
+    && docker --version
 
 # tini 作为 PID 1：容器主进程必须负责回收孤儿进程。sshd 的 pre-auth 子进程在
 # 遭遇扫描/爆破时会被 reparent 到 PID 1，若 PID 1 不调用 wait()（如 sleep），

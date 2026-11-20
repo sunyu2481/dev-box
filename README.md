@@ -10,6 +10,7 @@
 - Go 1.26.10
 - Java 21 / Maven 3.10.0 / Gradle 9.8.2
 - Git / Git LFS / GitHub CLI (`gh`)
+- Docker CLI，支持直接使用宿主机 Docker
 - 浏览器自动化客户端：Playwright 库与 `chrome-devtools-mcp`（**不含浏览器二进制**，浏览器由 ChromiumManager 容器经 CDP 提供，见下文）
 - 支持 CJK、emoji 和常见网页渲染场景的浏览器字体
 - 常用开发工具
@@ -19,8 +20,6 @@
   - OpenAI Codex CLI
 - 聊天桥接：[cc-connect](https://github.com/chenhg5/cc-connect)，可连接 Telegram、飞书、微信与 QQ；按需启用，见下文
 
-> 镜像**不预装 Docker CLI / Buildx / Compose**。如需在容器内操作宿主机 Docker，请自行安装客户端并挂载 `/var/run/docker.sock`。
-
 ## 镜像
 
 ```bash
@@ -29,7 +28,7 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 ## 发布与刷新预装工具
 
-GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每次构建前查询 cc-connect 官方 `beta` 通道，两个架构安装同一测试版，新版本发布后自动使该安装层及后续层缓存失效。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI、cc-connect 最新测试版和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每次构建前查询 cc-connect 官方 `beta` 通道，两个架构安装同一测试版，新版本发布后自动使该安装层及后续层缓存失效。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI、Docker CLI、cc-connect 最新测试版和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
 
 每次构建都会拉取基础镜像；系统安装层会更新基础镜像中已有的软件包。普通推送和手动构建仍使用构建层缓存，因此仅拉取基础镜像不能保证所有安装层重新执行。pnpm、Go、Maven、Gradle 和 uv 的默认版本固定在 `Dockerfile` 的构建参数中，升级这些工具需要修改对应参数。
 
@@ -38,12 +37,12 @@ GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workfl
 - 想刷新 cc-connect 测试版和 Codex 等未固定版本的全局 CLI，勾选 `refresh_volatile_tools`。
 - 需要完整绕过所有 Docker 构建缓存，勾选 `no_cache`。
 
-`refresh_volatile_tools` 参数在 cc-connect 安装层之前声明，刷新时可以复用前面的系统与工具链安装缓存。需要刷新系统安全补丁、Node.js 或 GitHub CLI 时，请使用 `no_cache`。
+`refresh_volatile_tools` 参数在 cc-connect 安装层之前声明，刷新时可以复用前面的系统与工具链安装缓存。需要刷新系统安全补丁、Node.js、GitHub CLI 或 Docker CLI时，请使用 `no_cache`。
 
-本地完整重建：
+镜像构建与发布统一由 GitHub Workflow 执行，禁止在本地构建镜像验证，也不预装 Buildx、BuildKit 等镜像构建工具。需要完整重建时，在 GitHub Actions 手动运行工作流并勾选 `no_cache`，或执行：
 
 ```bash
-docker build --pull --no-cache -t dev-box:local .
+gh workflow run docker.yml --ref main -f no_cache=true
 ```
 
 新镜像发布后，更新正在运行的容器：
@@ -61,6 +60,7 @@ docker compose up -d --force-recreate
 
 - `./workspace` 挂载到容器内的 `/workspace`
 - `./.vscode` 挂载到容器内的 `/home/vscode`，用于保留 shell 配置、工具缓存、Maven/Gradle/Go 缓存等用户数据
+- 宿主机 `/var/run/docker.sock` 挂载到容器内同名路径，用于操作宿主机 Docker
 
 启动容器：
 
@@ -73,7 +73,7 @@ docker compose up -d
 进入容器：
 
 ```bash
-docker compose exec dev-box bash
+docker compose exec --user vscode dev-box bash
 ```
 
 停止并删除容器：
@@ -99,6 +99,38 @@ HTTP_PROXY=http://proxy.example.com:8080 HTTPS_PROXY=http://proxy.example.com:80
 ```bash
 docker run --rm -it ghcr.io/sunyu2481/dev-box:latest bash
 ```
+
+### 使用宿主机 Docker
+
+镜像通过 Docker 官方软件源仅预装 `docker-ce-cli`，支持 `linux/amd64` 与 `linux/arm64`。默认 Compose 已挂载宿主机套接字，启动脚本会按其实际组号授权当前用户。以下 Compose 命令在宿主机执行；通过 `docker compose exec --user vscode dev-box bash` 进入容器，或使用新 SSH 会话、聊天代理，即可直接执行：
+
+```bash
+docker version
+docker ps
+```
+
+`exec` 需显式指定 `--user vscode`，让 Docker 重新读取启动脚本更新后的用户组；省略时可能沿用容器创建时的旧组而报权限错误。已经打开的 SSH 或终端会话需重新进入。
+
+这些命令操作的是宿主机上的容器和镜像；镜像内不安装或启动 Docker 守护进程。套接字访问权限等同于控制宿主机 Docker，应仅供受信任的用户和代理使用。不需要此能力时，删除 Compose 中的套接字挂载即可。
+
+宿主机使用无根模式或自定义套接字路径时，在宿主机设置 `DOCKER_SOCKET_PATH` 后重新创建容器，例如：
+
+```bash
+DOCKER_SOCKET_PATH=/run/user/1000/docker.sock docker compose up -d --force-recreate
+```
+
+挂载源必须已存在；Compose 不会将缺失的套接字自动创建为目录。容器内统一使用 `/var/run/docker.sock`，无需设置 `DOCKER_HOST`。启动脚本只更新容器内的用户组，不会对宿主机套接字执行 `chmod` 或 `chown`。若使用 `docker run`，保留默认启动命令以完成权限初始化：
+
+```bash
+docker run -d --name dev-box \
+  --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+  ghcr.io/sunyu2481/dev-box:latest
+docker exec --user vscode -it dev-box bash
+```
+
+使用 `docker run ... bash` 覆盖启动命令时不会自动配置组权限，可用 `--group-add "$(stat -c '%g' /var/run/docker.sock)"` 为该进程显式添加套接字组。
+
+容器内执行 `docker run -v` 或 Compose 绑定挂载时，源路径由宿主机解析。例如容器内的 `/workspace` 对应宿主机的 `./workspace`，挂载给其他容器时应使用宿主机上的绝对路径，或将工作目录在两侧挂到相同的绝对路径。
 
 ### 通过 SSH 连入容器
 
@@ -180,9 +212,9 @@ host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名�
 
 ### 聊天：接入 cc-connect
 
-镜像预装 cc-connect 官方 `beta` 通道的**最新测试版**，从对应 GitHub 发行包安装并校验 SHA256，支持 `linux/amd64` 和 `linux/arm64`。CI 每次构建前解析具体版本并传给两个架构；Dockerfile 默认 `CC_CONNECT_VERSION=beta`，本地在安装层重新执行时查询该通道。版本查询失败或发行包、校验文件缺失时构建失败，不回退到旧版。
+镜像预装 cc-connect 官方 `beta` 通道的**最新测试版**，从对应 GitHub 发行包安装并校验 SHA256，支持 `linux/amd64` 和 `linux/arm64`。CI 每次构建前解析具体版本并传给两个架构；Dockerfile 默认 `CC_CONNECT_VERSION=beta`，工作流在构建前解析该通道。版本查询失败或发行包、校验文件缺失时构建失败，不回退到旧版。
 
-本地构建可能复用旧安装层；需要更新时传入新的 `VOLATILE_TOOLS_CACHE_BUST`，或使用 `--no-cache`。也可通过 `--build-arg CC_CONNECT_VERSION=1.5.1-beta.3` 指定版本以回退。容器运行期间不会自动升级，安装版本可用 `cc-connect --version` 查看。
+普通工作流构建可能复用旧安装层；需要更新时勾选 `refresh_volatile_tools`，完整重建则勾选 `no_cache`。需要回退时修改 Dockerfile 的 `CC_CONNECT_VERSION` 默认值并推送，由工作流构建。容器运行期间不会自动升级，安装版本可用 `cc-connect --version` 查看。
 
 默认 `CC_CONNECT_ENABLED=0`。程序以 `vscode` 用户运行，读取同一用户的代理配置、认证和 MCP 注册；需先让 `codex`、`claude` 在容器内正常工作。聊天会话独立创建，与终端中正在运行的会话分别管理。
 

@@ -80,6 +80,7 @@ jobs:
             org.opencontainers.image.licenses=MIT
 
       - name: 构建并发布多架构镜像
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -97,3 +98,11 @@ jobs:
             VOLATILE_TOOLS_CACHE_BUST=${{ github.event_name == 'workflow_dispatch' && inputs.refresh_volatile_tools && github.run_id || '0' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: 验证启动脚本与 Docker 客户端权限
+        env:
+          BUILT_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        run: |
+          # 仅在工作流运行器执行，测试容器不挂载宿主机目录或真实 Docker 套接字。
+          docker run --rm -i "$BUILT_IMAGE" node < tests/cc-connect-smoke.cjs
+          docker run --rm -i "$BUILT_IMAGE" node < tests/docker-smoke.cjs

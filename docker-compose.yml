@@ -43,6 +43,13 @@ services:
     volumes:
       - ./workspace:/workspace
       - ./.vscode:/home/vscode
+      # 使用宿主机 Docker；启动脚本自动匹配套接字组权限。
+      # 无根模式可设 DOCKER_SOCKET_PATH=/run/user/<用户编号>/docker.sock。
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
     # 启动、SSH 与聊天桥接日志汇聚到容器 stdout（[init]/[sshd]/[cc-connect]），
     # 被爆破时 [sshd] 行会快速增长，需限制日志占用磁盘的上限。
     logging:

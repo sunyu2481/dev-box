@@ -22,6 +22,38 @@ printf '0' > "$AUTHFAIL_COUNTER" 2>/dev/null || true
 # 供本脚本自己输出结构化日志
 log() { printf '%s [init] %s\n' "$(log_ts)" "$*"; }
 
+# 按宿主机套接字的实际组号授权，不修改挂载文件的属主和权限。
+# 写入用户组供新 SSH 和显式指定用户的 docker exec 使用；重新执行让聊天桥接继承新组。
+if [ -S /var/run/docker.sock ]; then
+  docker_gid="$(stat -Lc '%g' /var/run/docker.sock)" || exit 1
+  docker_user="$(id -un)" || exit 1
+  if [[ " $(id -G "$docker_user") " != *" $docker_gid "* ]]; then
+    docker_group="$(getent group "$docker_gid" | cut -d: -f1)"
+    if [ -z "$docker_group" ]; then
+      docker_group="devbox-docker-$docker_gid"
+      sudo -n groupadd --gid "$docker_gid" "$docker_group" || exit 1
+    fi
+    sudo -n usermod -aG "$docker_group" "$docker_user" || exit 1
+    log "已授权 $docker_user 访问宿主机 Docker 套接字（组号 $docker_gid）"
+  fi
+  if [[ " $(id -G) " != *" $docker_gid "* ]]; then
+    if [ "${_DEVBOX_DOCKER_GROUPS_REFRESHED:-0}" = 1 ]; then
+      log "错误：刷新 Docker 套接字组权限失败"
+      exit 1
+    fi
+    # 保留容器环境与自定义 PATH，以同一用户重新载入附加组；此时尚未启动任何服务。
+    export _DEVBOX_DOCKER_GROUPS_REFRESHED=1
+    exec sudo -n -E /usr/bin/setpriv --reuid="$docker_user" --regid="$(id -g)" --init-groups \
+      /usr/bin/env "HOME=$HOME" "USER=$docker_user" "LOGNAME=$docker_user" "PATH=$PATH" \
+      /bin/bash "$0" "$@"
+  fi
+  unset _DEVBOX_DOCKER_GROUPS_REFRESHED
+  if [ ! -r /var/run/docker.sock ] || [ ! -w /var/run/docker.sock ]; then
+    log "错误：无法读写 /var/run/docker.sock，请检查宿主机套接字权限"
+    exit 1
+  fi
+fi
+
 # 从 stdin 逐行读取，加上时间戳与来源标签后写到 stdout。
 # IFS= 与 -r 保证原始行内容不被改写；末行无换行时 [ -n "$line" ] 兜底输出。
 tag_stream() {
