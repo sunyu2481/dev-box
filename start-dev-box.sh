@@ -135,6 +135,7 @@ export_env_for_ssh() {
   local block="# >>> dev-box runtime env >>>"
   for var in \
     CHROMIUM_MANAGER_URL CHROMIUM_MANAGER_TOKEN PLAYWRIGHT_BROWSERS_PATH \
+    AGY_CLI_DISABLE_AUTO_UPDATE \
     HTTP_PROXY HTTPS_PROXY NO_PROXY; do
     val="${!var:-}"
     [ -z "$val" ] && continue

@@ -91,7 +91,7 @@ while :; do sleep 0.1; done
         const ssh = spawn('ssh', [
           '-i', privateKey, '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=no',
           '-o', 'UserKnownHostsFile=/dev/null', 'vscode@127.0.0.1',
-          'docker ps >/dev/null && printf SSH访问成功',
+          'docker ps >/dev/null && test "$AGY_CLI_DISABLE_AUTO_UPDATE" = true && agy --version >/dev/null && printf SSH访问成功',
         ]);
         let reply = '';
         ssh.stdout.on('data', data => { reply += data; });

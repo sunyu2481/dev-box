@@ -18,6 +18,7 @@
 - AI CLI 工具：
   - Claude Code
   - OpenAI Codex CLI
+  - Google Antigravity CLI（`agy`）
 - 聊天桥接：[cc-connect](https://github.com/chenhg5/cc-connect)，可连接 Telegram、飞书、微信与 QQ；按需启用，见下文
 
 ## 镜像
@@ -28,7 +29,7 @@ docker pull ghcr.io/sunyu2481/dev-box:latest
 
 ## 发布与刷新预装工具
 
-GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每次构建前查询 cc-connect 官方 `beta` 通道，两个架构安装同一测试版，新版本发布后自动使该安装层及后续层缓存失效。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI、Docker CLI、cc-connect 最新测试版和默认安装最新版本的 Claude Code、Codex、Playwright、chrome-devtools-mcp。
+GitHub Actions 会在推送到 `main`、推送 `v*` 标签或手动触发 workflow 时构建并推送镜像。每次构建前查询 cc-connect 官方 `beta` 通道，两个架构安装同一测试版，新版本发布后自动使该安装层及后续层缓存失效。每周一北京时间 11:17 还会完整重建默认分支镜像，刷新 Ubuntu 安全补丁、Node.js 最新 LTS、GitHub CLI、Docker CLI、cc-connect 最新测试版和默认安装最新版本的 Claude Code、Codex、Antigravity CLI、Playwright、chrome-devtools-mcp。
 
 每次构建都会拉取基础镜像；系统安装层会更新基础镜像中已有的软件包。普通推送和手动构建仍使用构建层缓存，因此仅拉取基础镜像不能保证所有安装层重新执行。pnpm、Go、Maven、Gradle 和 uv 的默认版本固定在 `Dockerfile` 的构建参数中，升级这些工具需要修改对应参数。
 
@@ -209,6 +210,17 @@ docker run -d \
 host key 持久化在容器内 `/home/vscode/.ssh/host_keys` 下，借助命名卷/绑定挂载保留，重建容器后 SSH 指纹保持不变，不会触发客户端的 `REMOTE HOST IDENTIFICATION HAS CHANGED` 警告。
 
 > SSH 服务以 root 权限通过 `vscode` 用户的 `sudo` 启动；将端口暴露到公网前，请确认注入的是受信任的公钥。
+
+### 使用 Google Antigravity CLI
+
+镜像通过 [Google 官方安装器](https://antigravity.google/cli/install.sh) 安装 Antigravity CLI，支持 `linux/amd64` 和 `linux/arm64`，下载时校验 SHA512。命令为 `agy`，位于 `/usr/local/bin`，挂载 home 后仍可使用：
+
+```bash
+docker compose exec --user vscode dev-box agy --version
+docker compose exec --user vscode dev-box agy
+```
+
+首次运行按提示完成配置与认证，详见 [官方入门文档](https://antigravity.google/docs/getting-started?tab=cli)。镜像默认设置 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，并将其传入 SSH 会话，避免普通用户尝试更新 root 管理的系统文件。安装层执行时获取最新版本；后续更新使用工作流的 `refresh_volatile_tools`，再拉取镜像并重建容器。
 
 ### 聊天：接入 cc-connect
 

@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       refresh_volatile_tools:
-        description: '刷新 cc-connect 测试版、Claude Code、Codex、Playwright 和 chrome-devtools-mcp，复用工具链缓存'
+        description: '刷新 cc-connect 测试版、Claude Code、Codex、Antigravity CLI、Playwright 和 chrome-devtools-mcp，复用工具链缓存'
         required: false
         default: false
         type: boolean

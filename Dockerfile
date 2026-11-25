@@ -207,6 +207,15 @@ RUN echo "命令行工具刷新编号：${VOLATILE_TOOLS_CACHE_BUST}" \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# 从 Google 官方安装器安装 Antigravity CLI，支持两种目标架构并校验发行包 SHA512。
+# 系统目录由 root 管理，关闭后台自更新，版本随工作流重建刷新。
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
+RUN curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+        https://antigravity.google/cli/install.sh -o /tmp/antigravity-install.sh \
+    && bash /tmp/antigravity-install.sh --dir /usr/local/bin \
+    && rm -f /tmp/antigravity-install.sh \
+    && rm -rf /root/.cache/antigravity
+
 # 准备 vscode 用户的工具和缓存目录。
 # ms-playwright 目录预建并归属 vscode：镜像不带浏览器二进制，但需要本地浏览器时
 # （如 `playwright test`、`playwright screenshot` 这类只能启动本地浏览器的场景）
@@ -239,6 +248,7 @@ RUN corepack enable \
     && pnpm --version \
     && claude --version \
     && codex --version \
+    && agy --version \
     && cc-connect --version \
     && playwright --version \
     && test -r /usr/local/share/cc-connect/config.example.toml \
